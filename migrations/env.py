@@ -27,7 +27,14 @@ config = context.config
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    try:
+        fileConfig(config.config_file_name)
+    except FileNotFoundError:
+        # If alembic.ini is not in migrations directory, try project root
+        import os
+        root_config = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'alembic.ini')
+        if os.path.exists(root_config):
+            fileConfig(root_config)
 
 # add your model's MetaData object here
 # for 'autogenerate' support
