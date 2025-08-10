@@ -13,3 +13,5 @@ google-cloud-tasks==2.16.0
 google-cloud-secret-manager==2.19.0
 google-cloud-documentai==2.27.0
 filetype==1.2.0
+requests==2.31.0
+reportlab==4.0.4

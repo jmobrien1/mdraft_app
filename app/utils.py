@@ -14,12 +14,13 @@ from typing import Iterable, Optional
 
 import filetype
 
-# Allowed MIME types for uploaded documents.  Only PDFs and DOCX files
-# are supported in the initial MVP.  Additional types may be added
-# later as conversion engines are integrated.
+# Allowed MIME types for uploaded documents.  PDFs, DOCX files, and plain text
+# are supported.  Additional types may be added later as conversion engines
+# are integrated.
 ALLOWED_MIME_TYPES: set[str] = {
     "application/pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "text/plain",
 }
 
 
