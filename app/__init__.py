@@ -29,7 +29,11 @@ from flask_login import LoginManager
 # bound to the app inside create_app().
 db: SQLAlchemy = SQLAlchemy()
 migrate: Migrate = Migrate()
-limiter: Limiter = Limiter(key_func=get_remote_address)
+limiter: Limiter = Limiter(
+    key_func=get_remote_address,
+    storage_uri=os.environ.get("FLASK_LIMITER_STORAGE_URI") or os.environ.get("REDIS_URL") or os.environ.get("CELERY_BROKER_URL"),
+    default_limits=["120 per minute"],  # adjust later
+)
 bcrypt: Bcrypt = Bcrypt()
 login_manager: LoginManager = LoginManager()
 
@@ -118,9 +122,7 @@ def create_app() -> Flask:
         except Exception as e:
             app.logger.error(f"Failed to initialize Sentry: {e}")
     
-    # Configure rate limiting defaults.  Additional per-route limits can be
-    # applied via decorators on view functions.
-    app.config.setdefault("RATELIMIT_DEFAULT", "200 per day")
+    # Rate limiting is configured at the module level with Redis storage
 
     # Initialise extensions
     db.init_app(app)
