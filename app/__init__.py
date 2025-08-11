@@ -35,6 +35,17 @@ migrate: Migrate = Migrate()
 bcrypt: Bcrypt = Bcrypt()
 login_manager: LoginManager = LoginManager()
 
+# GLOBAL limiter (exported as app.limiter so routes can import it)
+limiter = Limiter(
+    key_func=get_remote_address,
+    storage_uri=(
+        ENV.get("FLASK_LIMITER_STORAGE_URI")
+        or ENV.get("REDIS_URL")
+        or ENV.get("CELERY_BROKER_URL")
+    ),
+    default_limits=[ENV.get("GLOBAL_RATE_LIMIT", "120 per minute")],
+)
+
 # Register models with SQLAlchemy metadata so Alembic can see them
 from .models_conversion import Conversion  # noqa: F401
 
@@ -105,20 +116,9 @@ def create_app() -> Flask:
         sentry_sdk.init(dsn=dsn, integrations=[FlaskIntegration()], traces_sample_rate=0.1)
 
     # Flask-Limiter configuration
-    from flask_limiter import Limiter
-    from flask_limiter.util import get_remote_address
-
     app.config.setdefault("RATELIMIT_HEADERS_ENABLED", True)
 
-    limiter = Limiter(
-        key_func=get_remote_address,
-        storage_uri=(
-            ENV.get("FLASK_LIMITER_STORAGE_URI")
-            or ENV.get("REDIS_URL")
-            or ENV.get("CELERY_BROKER_URL")
-        ),
-        default_limits=[ENV.get("GLOBAL_RATE_LIMIT", "120 per minute")],
-    )
+    # Initialize the global limiter on the app
     limiter.init_app(app)
 
     # Exempt health checks (keep Render happy)
