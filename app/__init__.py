@@ -29,11 +29,6 @@ from flask_login import LoginManager
 # bound to the app inside create_app().
 db: SQLAlchemy = SQLAlchemy()
 migrate: Migrate = Migrate()
-limiter: Limiter = Limiter(
-    key_func=get_remote_address,
-    storage_uri=os.environ.get("FLASK_LIMITER_STORAGE_URI") or os.environ.get("REDIS_URL") or os.environ.get("CELERY_BROKER_URL"),
-    default_limits=["120 per minute"],  # adjust later
-)
 bcrypt: Bcrypt = Bcrypt()
 login_manager: LoginManager = LoginManager()
 
@@ -106,15 +101,52 @@ def create_app() -> Flask:
     dsn = os.getenv("SENTRY_DSN")
     if dsn:
         sentry_sdk.init(dsn=dsn, integrations=[FlaskIntegration()], traces_sample_rate=0.1)
-    
-    # Rate limiting is configured at the module level with Redis storage
+
+    # Flask-Limiter configuration
+    import os
+    from flask_limiter import Limiter
+    from flask_limiter.util import get_remote_address
+
+    app.config.setdefault("RATELIMIT_HEADERS_ENABLED", True)
+
+    limiter = Limiter(
+        key_func=get_remote_address,
+        storage_uri=(
+            os.environ.get("FLASK_LIMITER_STORAGE_URI")
+            or os.environ.get("REDIS_URL")
+            or os.environ.get("CELERY_BROKER_URL")
+        ),
+        default_limits=[os.environ.get("GLOBAL_RATE_LIMIT", "120 per minute")],
+        strategy="fixed-window-elastic-expiry",
+    )
+    limiter.init_app(app)
+
+    # Exempt health checks (keep Render happy)
+    try:
+        from .health import bp as _health_bp
+        limiter.exempt(_health_bp)
+    except Exception:
+        pass
+
+    # Optional allowlist: comma-separated IPs in RATE_ALLOWLIST
+    from flask import request, jsonify
+    @limiter.request_filter
+    def _allowlist():
+        ips = {ip.strip() for ip in os.environ.get("RATE_ALLOWLIST","").split(",") if ip.strip()}
+        return request.remote_addr in ips
+
+    @app.errorhandler(429)
+    def _ratelimited(e):
+        # JSON for API, simple text for UI
+        if request.path.startswith("/api/"):
+            return jsonify(error="rate_limited", detail=str(e.description)), 429
+        return ("Rate limit exceeded. Try again shortly.", 429)
 
     # Initialise extensions
     db.init_app(app)
     migrate.init_app(app, db)
     bcrypt.init_app(app)
     login_manager.init_app(app)
-    limiter.init_app(app)
 
     # --- Demo-safe auth disable (Flask-Login) ---
     # We don't need authentication for the beta UI. Prevent Flask-Login
