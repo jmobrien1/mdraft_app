@@ -48,6 +48,7 @@ limiter = Limiter(
 
 # Register models with SQLAlchemy metadata so Alembic can see them
 from .models_conversion import Conversion  # noqa: F401
+from .models_apikey import ApiKey  # noqa: F401
 
 
 class JSONFormatter(logging.Formatter):
@@ -220,6 +221,9 @@ def create_app() -> Flask:
 
     from .routes import bp as main_blueprint  # type: ignore
     app.register_blueprint(main_blueprint)
+    
+    from .admin import bp as admin_bp
+    app.register_blueprint(admin_bp)
     
     # Register worker blueprint if running as worker service
     if ENV.get("WORKER_SERVICE", "false").lower() == "true":

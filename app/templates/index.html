@@ -15,6 +15,11 @@
         <button id="btn" class="btn" type="submit">Convert</button>
         <span id="status" class="hint">Idle</span>
       </div>
+      <div class="row" style="margin-top:8px;">
+        <input id="apiKey" class="input" placeholder="API key (optional)"/>
+        <button class="btn secondary" id="saveKey" type="button">Save key</button>
+        <span id="keyStatus" class="hint"></span>
+      </div>
     </form>
   </div>
 
@@ -51,6 +56,15 @@
   const pick = document.getElementById('pick');
   const drop = document.getElementById('drop');
   const chosen = document.getElementById('chosen');
+
+  const apiKeyInput = document.getElementById('apiKey');
+  const keyStatus = document.getElementById('keyStatus');
+  const savedKey = localStorage.getItem('apiKey') || '';
+  if (savedKey) { apiKeyInput.value = savedKey; keyStatus.textContent = 'Using saved key'; }
+  document.getElementById('saveKey').onclick = ()=>{
+    localStorage.setItem('apiKey', apiKeyInput.value.trim());
+    keyStatus.textContent = apiKeyInput.value.trim() ? 'Key saved' : 'Key cleared';
+  };
 
   pick.addEventListener('click', ()=> file.click());
   dragAndDrop(file, drop);
@@ -98,7 +112,10 @@
     btn.disabled = true; statusEl.textContent = 'Uploading…';
 
     try{
-      const res = await fetch('/api/convert', { method: 'POST', body: fd });
+      const headers = {};
+      const k = (localStorage.getItem('apiKey') || '').trim();
+      if (k) headers['X-API-Key'] = k;
+      const res = await fetch('/api/convert', { method: 'POST', body: fd, headers });
       const data = await res.json();
       if (res.status === 202 && data.status === "QUEUED"){
         statusEl.textContent = 'Queued…';

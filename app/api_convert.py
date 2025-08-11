@@ -5,9 +5,10 @@ from flask import Blueprint, request, jsonify, Response
 from werkzeug.utils import secure_filename
 from datetime import timezone
 
-from . import db
+from . import db, limiter
 from .models_conversion import Conversion
 from .security import sniff_category, size_ok
+from .auth_api import require_api_key_if_configured, rate_limit_for_convert, rate_limit_key_func
 
 bp = Blueprint("api_convert", __name__, url_prefix="/api")
 
@@ -33,7 +34,9 @@ def _convert_with_markitdown(path: str) -> str:
             return fh.read(8192).decode("utf-8", errors="ignore")
 
 @bp.post("/convert")
+@limiter.limit(rate_limit_for_convert, key_func=rate_limit_key_func)
 def api_convert():
+    require_api_key_if_configured()
     f = request.files.get("file")
     if not f:
         return jsonify(error="file is required (field name 'file')"), 400
@@ -160,6 +163,7 @@ def get_conversion_markdown(id):
     return Response((conv.markdown or ""), mimetype="text/markdown")
 
 @bp.get("/conversions")
+@limiter.limit(os.getenv("LIST_RATE_LIMIT", "240 per minute"))
 def list_conversions():
     try:
         limit = int(request.args.get("limit", 10))

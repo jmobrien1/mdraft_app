@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}API keys — mdraft{% endblock %}
+{% block content %}
+<div class="card">
+  <h2>API keys</h2>
+  <form class="row" method="post" action="/admin/keys/create" style="margin:8px 0">
+    <input class="input" name="name" placeholder="Name (e.g., partner A)" required />
+    <input class="input" name="rate_limit" placeholder="e.g., 60 per minute" />
+    <button class="btn" type="submit">Create</button>
+  </form>
+
+  <div class="section">
+    {% for k in keys %}
+    <div class="item">
+      <div>
+        <div><b>{{ k.name }}</b> — <span class="mono">{{ k.key }}</span></div>
+        <div class="hint">limit: {{ k.rate_limit }} · active: {{ "yes" if k.is_active else "no" }} · created: {{ k.created_at }} · last used: {{ k.last_used_at or "—" }}</div>
+      </div>
+      <div class="row">
+        <form method="post" action="/admin/keys/{{ k.id }}/toggle">
+          <button class="btn secondary" type="submit">{{ "Revoke" if k.is_active else "Activate" }}</button>
+        </form>
+        <form method="post" action="/admin/keys/{{ k.id }}/rotate">
+          <button class="btn secondary" type="submit">Rotate</button>
+        </form>
+      </div>
+    </div>
+    {% else %}
+    <p class="hint">No keys yet.</p>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}
