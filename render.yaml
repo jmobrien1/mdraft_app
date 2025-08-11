@@ -3,36 +3,50 @@ services:
     name: mdraft-web
     env: python
     buildCommand: pip install -r requirements.txt
+    preDeployCommand: bash scripts/predeploy.sh
     startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 2 --threads 8 --timeout 120 wsgi:app
     healthCheckPath: /health
-    preDeployCommand: |
-      flask --app app:create_app db upgrade || (
-        flask --app app:create_app db stamp head &&
-        flask --app app:create_app db migrate -m "init" &&
-        flask --app app:create_app db upgrade
-      )
     envVars:
       - key: FLASK_ENV
         value: production
       - key: SECRET_KEY
         generateValue: true
-      - key: QUEUE_MODE
-        value: sync
-      - key: USE_GCS
-        value: "0"
-  - type: worker
-    name: mdraft-worker
-    env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: celery -A celery_worker.celery worker --loglevel=info --pool=threads --concurrency=4 --without-gossip --without-mingle
-    envVars:
-      - key: QUEUE_MODE
-        value: async
+      - key: FLASK_LIMITER_STORAGE_URI
+        sync: false
+      - key: GLOBAL_RATE_LIMIT
+        value: 120 per minute
       - key: CELERY_BROKER_URL
         sync: false
       - key: CELERY_RESULT_BACKEND
         sync: false
-      - key: USE_GCS
-        value: "1"
+      - key: GOOGLE_APPLICATION_CREDENTIALS
+        value: /etc/secrets/gcp.json
       - key: GCS_BUCKET_NAME
         sync: false
+      - key: QUEUE_MODE
+        value: sync   # change to 'async' to enable queueing
+      - key: USE_GCS
+        value: "0"
+      - key: SENTRY_DSN
+        sync: false
+      - key: SENTRY_ENVIRONMENT
+        value: production
+
+  - type: worker
+    name: mdraft_app-worker
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: celery -A celery_worker.celery worker -b "$CELERY_BROKER_URL" --loglevel=info --pool=threads --concurrency=4 --without-gossip --without-mingle
+    envVars:
+      - key: CELERY_BROKER_URL
+        sync: false
+      - key: CELERY_RESULT_BACKEND
+        sync: false
+      - key: GOOGLE_APPLICATION_CREDENTIALS
+        value: /etc/secrets/gcp.json
+      - key: GCS_BUCKET_NAME
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
+      - key: SENTRY_ENVIRONMENT
+        value: production

@@ -86,7 +86,7 @@ def create_app() -> Flask:
 
     # Application configuration
     app.config["SECRET_KEY"] = ENV.get("SECRET_KEY", "changeme")
-    app.config.setdefault("MAX_CONTENT_LENGTH", 20 * 1024 * 1024)  # 20 MB
+    app.config.setdefault("MAX_CONTENT_LENGTH", 25 * 1024 * 1024)  # 25 MB hard cap
     
     # Database configuration
     database_url = ENV.get("DATABASE_URL")
@@ -111,9 +111,23 @@ def create_app() -> Flask:
     # Sentry configuration
     import sentry_sdk
     from sentry_sdk.integrations.flask import FlaskIntegration
-    dsn = ENV.get("SENTRY_DSN")
-    if dsn:
-        sentry_sdk.init(dsn=dsn, integrations=[FlaskIntegration()], traces_sample_rate=0.1)
+
+    sentry_dsn = ENV.get("SENTRY_DSN")
+    sentry_env = ENV.get("SENTRY_ENVIRONMENT", "production")
+    sentry_release = ENV.get("SENTRY_RELEASE")  # optional
+
+    if sentry_dsn:
+        sentry_sdk.init(
+            dsn=sentry_dsn,
+            integrations=[FlaskIntegration()],
+            environment=sentry_env,
+            release=sentry_release,
+            traces_sample_rate=0.10,   # adjust later
+        )
+
+    # Add CORS for APIs only
+    from flask_cors import CORS
+    CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=False)
 
     # Flask-Limiter configuration
     app.config.setdefault("RATELIMIT_HEADERS_ENABLED", True)
@@ -135,12 +149,16 @@ def create_app() -> Flask:
         ips = {ip.strip() for ip in ENV.get("RATE_ALLOWLIST","").split(",") if ip.strip()}
         return request.remote_addr in ips
 
-    @app.errorhandler(429)
-    def _ratelimited(e):
-        # JSON for API, simple text for UI
-        if request.path.startswith("/api/"):
-            return jsonify(error="rate_limited", detail=str(e.description)), 429
-        return ("Rate limit exceeded. Try again shortly.", 429)
+    # Add basic security headers
+    @app.after_request
+    def _set_secure_headers(resp):
+        resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+        resp.headers.setdefault("X-Frame-Options", "DENY")
+        resp.headers.setdefault("Referrer-Policy", "no-referrer")
+        resp.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+        # HSTS (ok behind Render's TLS)
+        resp.headers.setdefault("Strict-Transport-Security", "max-age=15552000; includeSubDomains; preload")
+        return resp
 
     # Initialise extensions
     db.init_app(app)
@@ -212,5 +230,37 @@ def create_app() -> Flask:
         from .tasks import create_queue_if_not_exists
         with app.app_context():
             create_queue_if_not_exists()
+
+    # Add friendly error handlers (JSON for /api, HTML for UI)
+    from flask import request, jsonify, render_template
+
+    def _wants_json():
+        return request.path.startswith("/api/")
+
+    @app.errorhandler(400)
+    def _bad_request(e):
+        return (jsonify(error="bad_request", detail=str(e)), 400) if _wants_json() \
+               else (render_template("errors/400.html"), 400)
+
+    @app.errorhandler(404)
+    def _not_found(e):
+        return (jsonify(error="not_found"), 404) if _wants_json() \
+               else (render_template("errors/404.html"), 404)
+
+    @app.errorhandler(413)  # payload too large
+    def _too_large(e):
+        return (jsonify(error="payload_too_large"), 413) if _wants_json() \
+               else (render_template("errors/413.html"), 413)
+
+    @app.errorhandler(429)
+    def _too_many(e):
+        # Keep your existing limiter 429 handler if defined; otherwise:
+        return (jsonify(error="rate_limited", detail=str(e.description)), 429) if _wants_json() \
+               else ("Rate limit exceeded. Try again shortly.", 429)
+
+    @app.errorhandler(500)
+    def _server_error(e):
+        return (jsonify(error="server_error"), 500) if _wants_json() \
+               else (render_template("errors/500.html"), 500)
 
     return app

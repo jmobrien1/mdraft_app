@@ -7,6 +7,7 @@ from datetime import timezone
 
 from . import db
 from .models_conversion import Conversion
+from .security import sniff_category, size_ok
 
 bp = Blueprint("api_convert", __name__, url_prefix="/api")
 
@@ -46,6 +47,19 @@ def api_convert():
         with tempfile.NamedTemporaryFile(delete=False) as tmp:
             f.save(tmp.name)
             tmp_path = tmp.name
+        
+        # Enforce security checks
+        fallback_mime = (f.mimetype or None)
+        mime, category = sniff_category(tmp_path, fallback_mime=fallback_mime)
+        if category is None:
+            try: os.unlink(tmp_path)
+            except Exception: pass
+            return jsonify(error="unsupported_media_type", mime=(mime or fallback_mime)), 415
+        if not size_ok(tmp_path, category):
+            try: os.unlink(tmp_path)
+            except Exception: pass
+            return jsonify(error="payload_too_large", category=category), 413
+        
         try:
             from google.cloud import storage
             bucket_name = os.environ["GCS_BUCKET_NAME"]
@@ -80,6 +94,18 @@ def api_convert():
     with tempfile.NamedTemporaryFile(delete=False) as tmp:
         f.save(tmp.name)
         tmp_path = tmp.name
+
+    # Enforce security checks
+    fallback_mime = (f.mimetype or None)
+    mime, category = sniff_category(tmp_path, fallback_mime=fallback_mime)
+    if category is None:
+        try: os.unlink(tmp_path)
+        except Exception: pass
+        return jsonify(error="unsupported_media_type", mime=(mime or fallback_mime)), 415
+    if not size_ok(tmp_path, category):
+        try: os.unlink(tmp_path)
+        except Exception: pass
+        return jsonify(error="payload_too_large", category=category), 413
 
     try:
         markdown = _convert_with_markitdown(tmp_path)
