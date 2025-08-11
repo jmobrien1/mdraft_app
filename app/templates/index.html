@@ -1,152 +1,129 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <title>mdraft — beta</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; max-width: 880px; margin: 40px auto; padding: 0 16px; }
-    header { margin-bottom: 24px; }
-    .card { border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
-    .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-    button { padding: 10px 14px; border: 1px solid #111827; background: #111827; color: white; border-radius: 10px; cursor: pointer; }
-    button[disabled] { opacity: .6; cursor: not-allowed; }
-    textarea { width: 100%; min-height: 320px; padding: 12px; border-radius: 10px; border: 1px solid #e5e7eb; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-    .hint { color: #6b7280; font-size: 14px; }
-    footer { margin-top: 24px; color: #6b7280; font-size: 13px; }
-  </style>
-</head>
-<body>
-  <header>
-    <h1>mdraft — beta</h1>
-    <p class="hint">Upload a file and get Markdown back from the <code>/api/convert</code> endpoint.</p>
-  </header>
-
+{% extends "base.html" %}
+{% block title %}mdraft — upload & convert{% endblock %}
+{% block content %}
   <div class="card">
-    <form id="form" class="row">
-      <input id="file" type="file" name="file" required />
-      <button id="btn" type="submit">Convert</button>
-      <span id="status" class="hint"></span>
+    <h2>Upload to convert</h2>
+    <p class="hint">Drop a file below or click to select. You'll get Markdown back. Async mode will queue and process via the worker.</p>
+
+    <form id="form" class="section">
+      <div id="drop" class="drop">
+        <input id="file" type="file" name="file" style="display:none" required />
+        <div>📄 Drag & drop file here or <button class="btn secondary" type="button" id="pick">Choose file</button></div>
+        <div id="chosen" class="hint" style="margin-top:6px;"></div>
+      </div>
+      <div class="row" style="margin-top:12px;">
+        <button id="btn" class="btn" type="submit">Convert</button>
+        <span id="status" class="hint">Idle</span>
+      </div>
     </form>
   </div>
 
-  <div style="height: 12px"></div>
-
-  <div class="card">
-    <label class="hint">Result</label>
-    <textarea id="out" placeholder="Markdown will appear here..." readonly></textarea>
-  </div>
-
-  <div style="height: 12px"></div>
-  <div class="card">
-    <div class="row" style="justify-content: space-between;">
-      <label class="hint">Recent conversions</label>
-      <button type="button" onclick="(async()=>{await loadRecent()})()">Refresh</button>
+  <div class="section card">
+    <h2>Result</h2>
+    <textarea id="out" class="ta mono" placeholder="Markdown will appear here..." readonly></textarea>
+    <div class="row" style="margin-top:8px;">
+      <button class="btn secondary" id="copyMd" type="button">Copy Markdown</button>
+      <button class="btn secondary" id="dlMd" type="button">Download .md</button>
     </div>
-    <ul id="recent" style="list-style: none; padding-left: 0; margin-top: 12px;"></ul>
   </div>
 
-  <footer>
-    Health check: <a href="/health">/health</a>
-  </footer>
+  <div class="section card">
+    <div class="row" style="justify-content:space-between;">
+      <h2>Recent conversions</h2>
+      <span class="hint">latest 10</span>
+    </div>
+    <div id="recent">
+      <div class="skel" style="width:70%"></div>
+      <div class="skel" style="width:40%;margin-top:8px"></div>
+      <div class="skel" style="width:55%;margin-top:8px"></div>
+    </div>
+  </div>
+{% endblock %}
 
-  <script>
-    const form = document.getElementById('form');
-    const file = document.getElementById('file');
-    const btn = document.getElementById('btn');
-    const out = document.getElementById('out');
-    const statusEl = document.getElementById('status');
+{% block scripts %}
+<script type="module">
+  import {toast,copy,fmtDate,dragAndDrop} from "/static/app.js";
+  const form = document.getElementById('form');
+  const file = document.getElementById('file');
+  const btn = document.getElementById('btn');
+  const out = document.getElementById('out');
+  const statusEl = document.getElementById('status');
+  const pick = document.getElementById('pick');
+  const drop = document.getElementById('drop');
+  const chosen = document.getElementById('chosen');
 
-    async function loadRecent() {
-      try {
-        const res = await fetch('/api/conversions?limit=10');
-        const data = await res.json();
-        const list = document.getElementById('recent');
-        list.innerHTML = '';
-        (data.items || []).forEach(item => {
-          const li = document.createElement('li');
-          li.style.marginBottom = '8px';
-          const a = document.createElement('a');
-          a.href = item.links.markdown;
-          a.textContent = `${item.filename} — ${item.status} — ${new Date(item.created_at).toLocaleString()}`;
-          a.target = '_blank';
+  pick.addEventListener('click', ()=> file.click());
+  dragAndDrop(file, drop);
+  drop.addEventListener('click', (e)=>{ if(e.target===drop) file.click(); });
+  file.addEventListener('change', ()=> chosen.textContent = file.files[0] ? file.files[0].name : "");
 
-          const copy = document.createElement('button');
-          copy.textContent = 'Copy link';
-          copy.style.marginLeft = '8px';
-          copy.onclick = () => navigator.clipboard.writeText(
-            location.origin + item.links.markdown
-          ).then(() => { copy.textContent = 'Copied!'; setTimeout(()=>copy.textContent='Copy link',1000); });
+  async function loadRecent(){
+    try{
+      const res = await fetch('/api/conversions?limit=10');
+      const data = await res.json();
+      const el = document.getElementById('recent');
+      el.innerHTML = '';
+      (data.items||[]).forEach(item=>{
+        const row = document.createElement('div'); row.className='item';
+        const left = document.createElement('div');
+        left.innerHTML = `<a class="link" href="${item.links.view||('/v/'+item.id)}" target="_blank">${item.filename}</a>
+          <span class="badge">${item.status}</span>
+          <span class="hint">${fmtDate(item.created_at)}</span>`;
+        const right = document.createElement('div');
+        const a1 = document.createElement('a'); a1.className='link'; a1.href=item.links.markdown; a1.textContent='Markdown'; a1.target='_blank';
+        const a2 = document.createElement('a'); a2.className='link'; a2.href=item.links.view||('/v/'+item.id); a2.textContent='View'; a2.style.marginLeft='12px'; a2.target='_blank';
+        const cp = document.createElement('button'); cp.className='btn secondary'; cp.style.marginLeft='12px'; cp.textContent='Copy link';
+        cp.onclick=()=> copy(location.origin+(item.links.view||('/v/'+item.id)));
+        right.append(a1,a2,cp);
+        row.append(left,right); el.append(row);
+      });
+    }catch(e){ console.error(e); }
+  }
 
-          const view = document.createElement('a');
-          view.href = '/v/' + item.id;
-          view.textContent = 'View';
-          view.style.marginLeft = '8px';
-          li.appendChild(view);
+  form.addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    if (!file.files.length) return;
+    const fd = new FormData();
+    fd.append('file', file.files[0]);
+    btn.disabled = true; statusEl.textContent = 'Uploading…';
 
-          li.appendChild(a);
-          li.appendChild(copy);
-          list.appendChild(li);
-        });
-      } catch (e) {
-        console.error(e);
+    try{
+      const res = await fetch('/api/convert', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (res.status === 202 && data.status === "QUEUED"){
+        statusEl.textContent = 'Queued…';
+        const poll = async ()=>{
+          const r = await fetch(data.links.self); const j = await r.json();
+          if (j.status === "COMPLETED"){
+            statusEl.textContent = "Completed";
+            const m = await fetch(j.links.markdown); out.value = await m.text();
+            toast("Done"); await loadRecent();
+          }else if (j.status === "FAILED"){
+            statusEl.textContent = "Failed"; out.value = j.error || "conversion failed";
+            toast("Failed", 2000);
+          }else{ setTimeout(poll, 1200); }
+        }; poll();
+      } else if (res.ok) {
+        statusEl.textContent = 'Done';
+        out.value = data.markdown ?? (data.links?.markdown ? ("See: "+data.links.markdown) : "");
+        toast("Done"); await loadRecent();
+      } else {
+        statusEl.textContent = 'Error'; out.value = JSON.stringify(data);
+        toast("Error", 2000);
       }
+    }catch(err){
+      statusEl.textContent = 'Network error'; out.value = String(err); toast("Network error", 2000);
+    }finally{
+      btn.disabled = false; form.reset(); chosen.textContent="";
     }
+  });
 
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      if (!file.files.length) return;
-      const fd = new FormData();
-      fd.append('file', file.files[0]);
-      btn.disabled = true;
-      statusEl.textContent = 'Converting...';
+  document.getElementById('copyMd').onclick = ()=> copy(out.value||"");
+  document.getElementById('dlMd').onclick = ()=>{
+    const blob = new Blob([out.value||""], {type:"text/markdown"}); const url = URL.createObjectURL(blob);
+    const a=document.createElement('a'); a.href=url; a.download='mdraft.md'; a.click(); URL.revokeObjectURL(url);
+  };
 
-      try {
-        const res = await fetch('/api/convert', { method: 'POST', body: fd });
-        const data = await res.json();
-        
-        const isQueued = (data.status === "QUEUED");
-        if (isQueued && data.links && data.links.self) {
-          statusEl.textContent = "Queued…";
-          // poll until completed
-          const id = data.id;
-          async function poll(){
-            try{
-              const r = await fetch(data.links.self);
-              const j = await r.json();
-              if (j.status === "COMPLETED"){
-                statusEl.textContent = "Completed";
-                const m = await fetch(j.links.markdown);
-                out.value = await m.text();
-              } else if (j.status === "FAILED") {
-                statusEl.textContent = "Failed";
-                out.value = (j.error || "conversion failed");
-              } else {
-                setTimeout(poll, 1500);
-              }
-            }catch(e){ setTimeout(poll, 2000); }
-          }
-          poll();
-        } else {
-          let md = data.markdown ?? '';
-          if (!md && data.links && data.links.markdown) {
-            md = `Markdown available at: ${data.links.markdown}\n\n` + md;
-          }
-          out.value = md + (data.warning ? `\n\n[warning] ${data.warning}` : '');
-          statusEl.textContent = res.ok ? `Done (id: ${data.id || 'n/a'})` : 'Error';
-        }
-        
-        await loadRecent();
-      } catch (err) {
-        statusEl.textContent = 'Network error';
-        out.value = String(err);
-      } finally {
-        btn.disabled = false;
-        form.reset();
-      }
-    });
-
-    window.addEventListener('DOMContentLoaded', loadRecent);
-  </script>
-</body>
-</html>
+  loadRecent();
+</script>
+{% endblock %}

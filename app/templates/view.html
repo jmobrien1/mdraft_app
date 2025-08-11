@@ -1,39 +1,51 @@
-<!doctype html>
-<html><head>
-  <meta charset="utf-8"/>
-  <title>{{ filename }} — mdraft</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-  <style>
-    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;max-width:840px;margin:40px auto;padding:0 16px;}
-    .content{line-height:1.6;}
-    pre,code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}
-    .hint{color:#6b7280}
-  </style>
-</head><body>
-  <h1>{{ filename }}</h1>
-  {% if status == "FAILED" %}
-    <p class="hint">Conversion failed.</p>
-    <pre>{{ error }}</pre>
-  {% elif status != "COMPLETED" %}
-    <p class="hint">Status: <b id="st">{{ status }}</b>. This page will auto-refresh.</p>
-    <script>
-      async function poll(){
-        try {
-          const r = await fetch(`/api/conversions/{{ id }}`);
-          const j = await r.json();
-          if (j.status === "COMPLETED") location.reload();
-          else setTimeout(poll, 1500);
-        } catch { setTimeout(poll, 2000); }
-      }
-      poll();
-    </script>
-  {% else %}
-    <div id="md" class="content"></div>
-    <script>
-      const raw = {{ markdown|tojson }};
-      document.getElementById('md').innerHTML = marked.parse(raw || "");
-    </script>
-  {% endif %}
-  <p class="hint"><a href="/">← Back</a></p>
-</body></html>
+{% extends "base.html" %}
+{% block title %}{{ filename }} — mdraft{% endblock %}
+{% block content %}
+  <div class="card">
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <h2 class="mono">{{ filename }}</h2>
+      <div class="row">
+        <button class="btn secondary" id="copyLink" type="button">Copy link</button>
+        <button class="btn secondary" id="copyMd" type="button">Copy markdown</button>
+        <button class="btn" id="dlMd" type="button">Download .md</button>
+      </div>
+    </div>
+
+    {% if status == "FAILED" %}
+      <p class="hint">Conversion failed:</p>
+      <pre class="mono">{{ error }}</pre>
+    {% elif status != "COMPLETED" %}
+      <p class="hint">Status: <b id="st">{{ status }}</b>. This page will auto-refresh.</p>
+      <div class="skel" style="height:160px"></div>
+      <script>
+        async function poll(){
+          try{
+            const r = await fetch("/api/conversions/{{ id }}"); const j = await r.json();
+            if (j.status === "COMPLETED") location.reload(); else setTimeout(poll, 1200);
+          }catch{ setTimeout(poll, 1600); }
+        } poll();
+      </script>
+    {% else %}
+      <div id="md" class="content"></div>
+      <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+      <script>
+        const raw = {{ markdown|tojson }};
+        document.getElementById('md').innerHTML = marked.parse(raw || "");
+      </script>
+    {% endif %}
+  </div>
+{% endblock %}
+
+{% block scripts %}
+<script type="module">
+  import {copy,toast} from "/static/app.js";
+  document.getElementById('copyLink').onclick = ()=> copy(location.href);
+  const md = {{ markdown|tojson }};
+  document.getElementById('copyMd').onclick = ()=> copy(md || "");
+  document.getElementById('dlMd').onclick = ()=>{
+    const blob = new Blob([md||""], {type:"text/markdown"});
+    const url = URL.createObjectURL(blob); const a=document.createElement('a');
+    a.href=url; a.download="{{ (filename or 'mdraft')|replace(' ','_') }}.md"; a.click(); URL.revokeObjectURL(url);
+  };
+</script>
+{% endblock %}

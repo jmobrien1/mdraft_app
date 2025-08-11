@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>{% block title %}mdraft — convert to Markdown{% endblock %}</title>
+  <meta name="description" content="mdraft converts your files to clean Markdown."/>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml"/>
+  <link rel="preload" href="/static/styles.css" as="style"/>
+  <link rel="stylesheet" href="/static/styles.css"/>
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <a class="brand" href="/">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M4 7h16v10H4z" stroke="currentColor" stroke-width="1.5"/><path d="M8 13l2-2 2 2 4-4" stroke="currentColor" stroke-width="1.5"/></svg>
+        <h1>mdraft</h1>
+      </a>
+      <div class="row">
+        <a class="link" href="/health" title="health">/health</a>
+        <a class="link" href="https://mdraft-web.onrender.com/api/conversions?limit=5" target="_blank">API</a>
+      </div>
+    </div>
+
+    {% block content %}{% endblock %}
+
+    <div class="section hint">mdraft beta · <span class="badge">v0</span></div>
+  </div>
+  <script type="module" src="/static/app.js"></script>
+  <div class="toast" aria-live="polite"></div>
+  {% block scripts %}{% endblock %}
+</body>
+</html>
