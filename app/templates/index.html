@@ -74,7 +74,17 @@
         const a2 = document.createElement('a'); a2.className='link'; a2.href=item.links.view||('/v/'+item.id); a2.textContent='View'; a2.style.marginLeft='12px'; a2.target='_blank';
         const cp = document.createElement('button'); cp.className='btn secondary'; cp.style.marginLeft='12px'; cp.textContent='Copy link';
         cp.onclick=()=> copy(location.origin+(item.links.view||('/v/'+item.id)));
-        right.append(a1,a2,cp);
+        const loadBtn = document.createElement('button');
+        loadBtn.className = 'btn secondary';
+        loadBtn.style.marginLeft = '12px';
+        loadBtn.textContent = 'Load here';
+        loadBtn.onclick = async ()=>{
+          statusEl.textContent = 'Loading…';
+          const m = await fetch(item.links.markdown);
+          out.value = await m.text();
+          statusEl.textContent = 'Loaded';
+        };
+        right.append(a1,a2,cp,loadBtn);
         row.append(left,right); el.append(row);
       });
     }catch(e){ console.error(e); }
@@ -93,22 +103,35 @@
       if (res.status === 202 && data.status === "QUEUED"){
         statusEl.textContent = 'Queued…';
         const poll = async ()=>{
-          const r = await fetch(data.links.self); const j = await r.json();
+          const r = await fetch(data.links.self);
+          const j = await r.json();
           if (j.status === "COMPLETED"){
             statusEl.textContent = "Completed";
-            const m = await fetch(j.links.markdown); out.value = await m.text();
+            const mres = await fetch(j.links.markdown);
+            out.value = await mres.text();   // <-- always load markdown text
             toast("Done"); await loadRecent();
-          }else if (j.status === "FAILED"){
-            statusEl.textContent = "Failed"; out.value = j.error || "conversion failed";
+          } else if (j.status === "FAILED"){
+            statusEl.textContent = "Failed";
+            out.value = j.error || "conversion failed";
             toast("Failed", 2000);
-          }else{ setTimeout(poll, 1200); }
+          } else {
+            setTimeout(poll, 1200);
+          }
         }; poll();
       } else if (res.ok) {
         statusEl.textContent = 'Done';
-        out.value = data.markdown ?? (data.links?.markdown ? ("See: "+data.links.markdown) : "");
+        if (data.markdown) {
+          out.value = data.markdown;
+        } else if (data.links && data.links.markdown) {
+          const mres = await fetch(data.links.markdown);  // <-- fetch when only a link is returned
+          out.value = await mres.text();
+        } else {
+          out.value = ""; // nothing? keep empty
+        }
         toast("Done"); await loadRecent();
       } else {
-        statusEl.textContent = 'Error'; out.value = JSON.stringify(data);
+        statusEl.textContent = 'Error';
+        out.value = JSON.stringify(data);
         toast("Error", 2000);
       }
     }catch(err){
@@ -118,9 +141,10 @@
     }
   });
 
-  document.getElementById('copyMd').onclick = ()=> copy(out.value||"");
+  document.getElementById('copyMd').onclick = ()=> navigator.clipboard.writeText(out.value||"");
   document.getElementById('dlMd').onclick = ()=>{
-    const blob = new Blob([out.value||""], {type:"text/markdown"}); const url = URL.createObjectURL(blob);
+    const blob = new Blob([out.value||""], {type:"text/markdown"});
+    const url = URL.createObjectURL(blob);
     const a=document.createElement('a'); a.href=url; a.download='mdraft.md'; a.click(); URL.revokeObjectURL(url);
   };
 
