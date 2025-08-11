@@ -78,11 +78,11 @@
             location.origin + item.links.markdown
           ).then(() => { copy.textContent = 'Copied!'; setTimeout(()=>copy.textContent='Copy link',1000); });
 
-          const v = document.createElement('a');
-          v.href = '/v/' + item.id;
-          v.textContent = 'View';
-          v.style.marginLeft = '8px';
-          li.appendChild(v);
+          const view = document.createElement('a');
+          view.href = '/v/' + item.id;
+          view.textContent = 'View';
+          view.style.marginLeft = '8px';
+          li.appendChild(view);
 
           li.appendChild(a);
           li.appendChild(copy);
@@ -104,12 +104,38 @@
       try {
         const res = await fetch('/api/convert', { method: 'POST', body: fd });
         const data = await res.json();
-        let md = data.markdown ?? '';
-        if (!md && data.links && data.links.markdown) {
-          md = `Markdown available at: ${data.links.markdown}\n\n` + md;
+        
+        const isQueued = (data.status === "QUEUED");
+        if (isQueued && data.links && data.links.self) {
+          statusEl.textContent = "Queued…";
+          // poll until completed
+          const id = data.id;
+          async function poll(){
+            try{
+              const r = await fetch(data.links.self);
+              const j = await r.json();
+              if (j.status === "COMPLETED"){
+                statusEl.textContent = "Completed";
+                const m = await fetch(j.links.markdown);
+                out.value = await m.text();
+              } else if (j.status === "FAILED") {
+                statusEl.textContent = "Failed";
+                out.value = (j.error || "conversion failed");
+              } else {
+                setTimeout(poll, 1500);
+              }
+            }catch(e){ setTimeout(poll, 2000); }
+          }
+          poll();
+        } else {
+          let md = data.markdown ?? '';
+          if (!md && data.links && data.links.markdown) {
+            md = `Markdown available at: ${data.links.markdown}\n\n` + md;
+          }
+          out.value = md + (data.warning ? `\n\n[warning] ${data.warning}` : '');
+          statusEl.textContent = res.ok ? `Done (id: ${data.id || 'n/a'})` : 'Error';
         }
-        out.value = md + (data.warning ? `\n\n[warning] ${data.warning}` : '');
-        statusEl.textContent = res.ok ? `Done (id: ${data.id || 'n/a'})` : 'Error';
+        
         await loadRecent();
       } catch (err) {
         statusEl.textContent = 'Network error';

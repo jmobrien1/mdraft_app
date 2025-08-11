@@ -1,5 +1,6 @@
 import os
 import tempfile
+import uuid
 from flask import Blueprint, request, jsonify, Response
 from werkzeug.utils import secure_filename
 from datetime import timezone
@@ -36,42 +37,46 @@ def api_convert():
     if not f:
         return jsonify(error="file is required (field name 'file')"), 400
 
+    filename = secure_filename(f.filename or "upload.bin")
     queue_mode = os.getenv("QUEUE_MODE", "sync").lower()
-    use_gcs = os.getenv("USE_GCS", "0") in ("1","true","True")
+    use_gcs = os.getenv("USE_GCS", "0").lower() in ("1","true","yes")
 
     if queue_mode == "async" and use_gcs:
-        # Save local tmp
-        filename = secure_filename(f.filename or "upload.bin")
+        # Save locally and upload to GCS for the worker to fetch
         with tempfile.NamedTemporaryFile(delete=False) as tmp:
             f.save(tmp.name)
             tmp_path = tmp.name
         try:
-            # Upload to GCS
             from google.cloud import storage
             bucket_name = os.environ["GCS_BUCKET_NAME"]
             client = storage.Client()
             bucket = client.bucket(bucket_name)
-            object_key = f"uploads/{secure_filename(filename)}"
+            object_key = f"uploads/{uuid.uuid4()}-{filename}"
             blob = bucket.blob(object_key)
             blob.upload_from_filename(tmp_path)
             gcs_uri = f"gs://{bucket_name}/{object_key}"
 
-            # Create DB row and enqueue
             conv = Conversion(filename=filename, status="QUEUED")
             db.session.add(conv); db.session.commit()
 
             from celery_worker import celery
             celery.send_task("convert_from_gcs", args=[conv.id, gcs_uri])
 
-            return jsonify(id=conv.id, filename=filename, status=conv.status,
-                           links={"self": f"/api/conversions/{conv.id}",
-                                  "markdown": f"/api/conversions/{conv.id}/markdown"}), 202
+            return jsonify(
+                id=conv.id,
+                filename=filename,
+                status=conv.status,
+                links={
+                    "self": f"/api/conversions/{conv.id}",
+                    "markdown": f"/api/conversions/{conv.id}/markdown",
+                    "view": f"/v/{conv.id}",
+                },
+            ), 202
         finally:
             try: os.unlink(tmp_path)
             except Exception: pass
 
-    # Fallback: current synchronous path
-    filename = secure_filename(f.filename or "upload.bin")
+    # ---------- synchronous fallback (existing behavior) ----------
     with tempfile.NamedTemporaryFile(delete=False) as tmp:
         f.save(tmp.name)
         tmp_path = tmp.name
@@ -81,15 +86,30 @@ def api_convert():
         conv = Conversion(filename=filename, status="COMPLETED", markdown=markdown)
         db.session.add(conv)
         db.session.commit()
-        return jsonify(id=conv.id, filename=filename, status=conv.status,
-                       links={"self": f"/api/conversions/{conv.id}",
-                              "markdown": f"/api/conversions/{conv.id}/markdown"}), 200
+        return jsonify(
+            id=conv.id,
+            filename=filename,
+            status=conv.status,
+            links={
+                "self": f"/api/conversions/{conv.id}",
+                "markdown": f"/api/conversions/{conv.id}/markdown",
+                "view": f"/v/{conv.id}",
+            },
+        ), 200
     except Exception as e:
         conv = Conversion(filename=filename, status="FAILED", error=str(e))
         db.session.add(conv)
         db.session.commit()
-        return jsonify(id=conv.id, filename=filename, status=conv.status, error=str(e),
-                       links={"self": f"/api/conversions/{conv.id}"}), 200
+        return jsonify(
+            id=conv.id,
+            filename=filename,
+            status=conv.status,
+            error=str(e),
+            links={
+                "self": f"/api/conversions/{conv.id}",
+                "view": f"/v/{conv.id}",
+            }
+        ), 200
     finally:
         try: os.unlink(tmp_path)
         except Exception: pass
@@ -97,8 +117,16 @@ def api_convert():
 @bp.get("/conversions/<id>")
 def get_conversion(id):
     conv = Conversion.query.get_or_404(id)
-    return jsonify(id=conv.id, filename=conv.filename, status=conv.status, error=conv.error,
-                   links={"markdown": f"/api/conversions/{conv.id}/markdown"})
+    return jsonify(
+        id=conv.id,
+        filename=conv.filename,
+        status=conv.status,
+        error=conv.error,
+        links={
+            "markdown": f"/api/conversions/{conv.id}/markdown",
+            "view": f"/v/{conv.id}",
+        }
+    )
 
 @bp.get("/conversions/<id>/markdown")
 def get_conversion_markdown(id):
@@ -125,7 +153,8 @@ def list_conversions():
             "created_at": (c.created_at.replace(tzinfo=timezone.utc).isoformat() if c.created_at else None),
             "links": {
                 "self": f"/api/conversions/{c.id}",
-                "markdown": f"/api/conversions/{c.id}/markdown"
+                "markdown": f"/api/conversions/{c.id}/markdown",
+                "view": f"/v/{c.id}",
             }
         })
     return jsonify(items=items, limit=limit, offset=offset), 200
