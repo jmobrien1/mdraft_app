@@ -37,6 +37,15 @@
     <textarea id="out" placeholder="Markdown will appear here..." readonly></textarea>
   </div>
 
+  <div style="height: 12px"></div>
+  <div class="card">
+    <div class="row" style="justify-content: space-between;">
+      <label class="hint">Recent conversions</label>
+      <button type="button" onclick="(async()=>{await loadRecent()})()">Refresh</button>
+    </div>
+    <ul id="recent" style="list-style: none; padding-left: 0; margin-top: 12px;"></ul>
+  </div>
+
   <footer>
     Health check: <a href="/health">/health</a>
   </footer>
@@ -47,6 +56,36 @@
     const btn = document.getElementById('btn');
     const out = document.getElementById('out');
     const statusEl = document.getElementById('status');
+
+    async function loadRecent() {
+      try {
+        const res = await fetch('/api/conversions?limit=10');
+        const data = await res.json();
+        const list = document.getElementById('recent');
+        list.innerHTML = '';
+        (data.items || []).forEach(item => {
+          const li = document.createElement('li');
+          li.style.marginBottom = '8px';
+          const a = document.createElement('a');
+          a.href = item.links.markdown;
+          a.textContent = `${item.filename} — ${item.status} — ${new Date(item.created_at).toLocaleString()}`;
+          a.target = '_blank';
+
+          const copy = document.createElement('button');
+          copy.textContent = 'Copy link';
+          copy.style.marginLeft = '8px';
+          copy.onclick = () => navigator.clipboard.writeText(
+            location.origin + item.links.markdown
+          ).then(() => { copy.textContent = 'Copied!'; setTimeout(()=>copy.textContent='Copy link',1000); });
+
+          li.appendChild(a);
+          li.appendChild(copy);
+          list.appendChild(li);
+        });
+      } catch (e) {
+        console.error(e);
+      }
+    }
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -59,19 +98,23 @@
       try {
         const res = await fetch('/api/convert', { method: 'POST', body: fd });
         const data = await res.json();
-        let md = (data.markdown ?? '');
+        let md = data.markdown ?? '';
         if (!md && data.links && data.links.markdown) {
           md = `Markdown available at: ${data.links.markdown}\n\n` + md;
         }
         out.value = md + (data.warning ? `\n\n[warning] ${data.warning}` : '');
         statusEl.textContent = res.ok ? `Done (id: ${data.id || 'n/a'})` : 'Error';
+        await loadRecent();
       } catch (err) {
         statusEl.textContent = 'Network error';
         out.value = String(err);
       } finally {
         btn.disabled = false;
+        form.reset();
       }
     });
+
+    window.addEventListener('DOMContentLoaded', loadRecent);
   </script>
 </body>
 </html>

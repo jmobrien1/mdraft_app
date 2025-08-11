@@ -2,6 +2,7 @@ import os
 import tempfile
 from flask import Blueprint, request, jsonify, Response
 from werkzeug.utils import secure_filename
+from datetime import timezone
 
 from . import db
 from .models_conversion import Conversion
@@ -68,3 +69,28 @@ def get_conversion(id):
 def get_conversion_markdown(id):
     conv = Conversion.query.get_or_404(id)
     return Response((conv.markdown or ""), mimetype="text/markdown")
+
+@bp.get("/conversions")
+def list_conversions():
+    try:
+        limit = int(request.args.get("limit", 10))
+        offset = int(request.args.get("offset", 0))
+    except ValueError:
+        return jsonify(error="limit/offset must be integers"), 400
+    limit = max(1, min(limit, 100))
+    offset = max(0, offset)
+
+    q = Conversion.query.order_by(Conversion.created_at.desc()).offset(offset).limit(limit).all()
+    items = []
+    for c in q:
+        items.append({
+            "id": c.id,
+            "filename": c.filename,
+            "status": c.status,
+            "created_at": (c.created_at.replace(tzinfo=timezone.utc).isoformat() if c.created_at else None),
+            "links": {
+                "self": f"/api/conversions/{c.id}",
+                "markdown": f"/api/conversions/{c.id}/markdown"
+            }
+        })
+    return jsonify(items=items, limit=limit, offset=offset), 200
