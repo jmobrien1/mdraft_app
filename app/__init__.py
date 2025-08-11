@@ -169,6 +169,9 @@ def create_app() -> Flask:
     from .beta import bp as beta_bp
     app.register_blueprint(beta_bp)
 
+    from .api_convert import bp as api_bp
+    app.register_blueprint(api_bp)
+
     from .routes import bp as main_blueprint  # type: ignore
     app.register_blueprint(main_blueprint)
     

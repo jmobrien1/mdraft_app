@@ -19,7 +19,7 @@
 <body>
   <header>
     <h1>mdraft — beta</h1>
-    <p class="hint">Upload a file and get Markdown back from the <code>/beta/convert</code> endpoint.</p>
+    <p class="hint">Upload a file and get Markdown back from the <code>/api/convert</code> endpoint.</p>
   </header>
 
   <div class="card">
@@ -57,10 +57,14 @@
       statusEl.textContent = 'Converting...';
 
       try {
-        const res = await fetch('/beta/convert', { method: 'POST', body: fd });
+        const res = await fetch('/api/convert', { method: 'POST', body: fd });
         const data = await res.json();
-        out.value = (data.markdown ?? '') + (data.warning ? `\n\n[warning] ${data.warning}` : '');
-        statusEl.textContent = res.ok ? 'Done' : 'Error';
+        let md = (data.markdown ?? '');
+        if (!md && data.links && data.links.markdown) {
+          md = `Markdown available at: ${data.links.markdown}\n\n` + md;
+        }
+        out.value = md + (data.warning ? `\n\n[warning] ${data.warning}` : '');
+        statusEl.textContent = res.ok ? `Done (id: ${data.id || 'n/a'})` : 'Error';
       } catch (err) {
         statusEl.textContent = 'Network error';
         out.value = String(err);
