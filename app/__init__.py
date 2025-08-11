@@ -147,6 +147,8 @@ def create_app() -> Flask:
     from .routes import bp as main_blueprint  # type: ignore
 
     app.register_blueprint(main_blueprint)
+    from .health import bp as health_bp
+    app.register_blueprint(health_bp)
     
     # Register worker blueprint if running as worker service
     if os.environ.get("WORKER_SERVICE", "false").lower() == "true":
