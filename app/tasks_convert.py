@@ -4,11 +4,13 @@ from app import create_app, db
 from .models_conversion import Conversion
 from .api_convert import _convert_with_markitdown
 from .quality import clean_markdown, pdf_text_fallback
+from .webhooks import deliver_webhook
+from flask import current_app
 
 app = create_app()
 
 @celery.task(name="convert_from_gcs")
-def convert_from_gcs(conv_id: str, gcs_uri: str):
+def convert_from_gcs(conv_id: str, gcs_uri: str, filename: str = None, callback_url: str = None):
     from google.cloud import storage
 
     with app.app_context():
@@ -35,10 +37,47 @@ def convert_from_gcs(conv_id: str, gcs_uri: str):
             conv.markdown = clean_markdown(markdown)
             conv.status = "COMPLETED"
             db.session.commit()
+            
+            if callback_url:
+                try:
+                    code, _ = deliver_webhook(
+                        callback_url,
+                        "conversion.completed",
+                        {
+                            "id": conv.id,
+                            "filename": conv.filename,
+                            "status": "COMPLETED",
+                            "links": {
+                                "self": f"/api/conversions/{conv.id}",
+                                "markdown": f"/api/conversions/{conv.id}/markdown",
+                                "view": f"/v/{conv.id}",
+                            },
+                        },
+                    )
+                    current_app.logger.info("webhook_delivered_async", extra={"url": callback_url, "code": code})
+                except Exception as e:
+                    current_app.logger.exception("webhook_async_error: %s", e)
         except Exception as e:
             conv.status = "FAILED"
             conv.error = str(e)
             db.session.commit()
+            
+            if callback_url:
+                try:
+                    code, _ = deliver_webhook(
+                        callback_url,
+                        "conversion.failed",
+                        {
+                            "id": conv.id,
+                            "filename": conv.filename,
+                            "status": "FAILED",
+                            "error": conv.error or "unknown",
+                            "links": {"self": f"/api/conversions/{conv.id}"},
+                        },
+                    )
+                    current_app.logger.info("webhook_delivered_async_failed", extra={"url": callback_url, "code": code})
+                except Exception as e:
+                    current_app.logger.exception("webhook_async_error_failed: %s", e)
         finally:
             try: os.unlink(tmp_path)
             except Exception: pass

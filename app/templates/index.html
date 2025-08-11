@@ -4,6 +4,7 @@
   <div class="card">
     <h2>Upload to convert</h2>
     <p class="hint">Drop a file below or click to select. You'll get Markdown back. Async mode will queue and process via the worker.</p>
+    <p class="hint">Optional: add <code>callback_url</code> to your API request to receive a POST when the conversion finishes. Verify with the <code>X-MDraft-Signature</code> header (HMAC SHA-256).</p>
 
     <form id="form" class="section">
       <div id="drop" class="drop">

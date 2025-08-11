@@ -29,7 +29,7 @@ redis==5.0.7
 
 # File processing and utilities
 filetype==1.2.0
-requests==2.31.0
+requests==2.32.3
 reportlab==4.0.4
 markitdown[all]==0.1.2
 pdfminer.six==20231228

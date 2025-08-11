@@ -1,7 +1,7 @@
 import os
 import tempfile
 import uuid
-from flask import Blueprint, request, jsonify, Response
+from flask import Blueprint, request, jsonify, Response, current_app
 from werkzeug.utils import secure_filename
 from datetime import datetime, timedelta, timezone
 
@@ -10,6 +10,7 @@ from .models_conversion import Conversion
 from .security import sniff_category, size_ok
 from .auth_api import require_api_key_if_configured, rate_limit_for_convert, rate_limit_key_func
 from .quality import sha256_file, clean_markdown, pdf_text_fallback
+from .webhooks import deliver_webhook
 
 bp = Blueprint("api_convert", __name__, url_prefix="/api")
 
@@ -45,6 +46,15 @@ def api_convert():
     filename = secure_filename(f.filename or "upload.bin")
     queue_mode = os.getenv("QUEUE_MODE", "sync").lower()
     use_gcs = os.getenv("USE_GCS", "0").lower() in ("1","true","yes")
+
+    callback_url = (
+        request.form.get("callback_url")
+        or request.args.get("callback_url")
+        or (request.json or {}).get("callback_url") if request.is_json else None
+    )
+    # optionally validate it's http/https
+    if callback_url and not (callback_url.startswith("http://") or callback_url.startswith("https://")):
+        return jsonify(error="invalid_callback_url"), 400
 
     if queue_mode == "async" and use_gcs:
         # Save locally and upload to GCS for the worker to fetch
@@ -112,18 +122,21 @@ def api_convert():
             db.session.add(conv); db.session.commit()
 
             from celery_worker import celery
-            celery.send_task("convert_from_gcs", args=[conv.id, gcs_uri])
+            celery.send_task("convert_from_gcs", args=[conv.id, gcs_uri, filename, callback_url])
 
-            return jsonify(
-                id=conv.id,
-                filename=filename,
-                status=conv.status,
-                links={
+            resp = {
+                "id": conv.id,
+                "filename": filename,
+                "status": conv.status,
+                "links": {
                     "self": f"/api/conversions/{conv.id}",
                     "markdown": f"/api/conversions/{conv.id}/markdown",
                     "view": f"/v/{conv.id}",
                 },
-            ), 202
+            }
+            if callback_url:
+                resp["callback_url"] = callback_url
+            return jsonify(resp), 202
         finally:
             try: os.unlink(tmp_path)
             except Exception: pass
@@ -188,6 +201,27 @@ def api_convert():
         )
         db.session.add(conv)
         db.session.commit()
+        
+        if callback_url:
+            try:
+                code, _ = deliver_webhook(
+                    callback_url,
+                    "conversion.completed",
+                    {
+                        "id": conv.id,
+                        "filename": conv.filename,
+                        "status": "COMPLETED",
+                        "links": {
+                            "self": f"/api/conversions/{conv.id}",
+                            "markdown": f"/api/conversions/{conv.id}/markdown",
+                            "view": f"/v/{conv.id}",
+                        },
+                    },
+                )
+                current_app.logger.info("webhook_delivered_sync", extra={"url": callback_url, "code": code})
+            except Exception as e:
+                current_app.logger.exception("webhook_sync_error: %s", e)
+        
         return jsonify(
             id=conv.id,
             filename=filename,

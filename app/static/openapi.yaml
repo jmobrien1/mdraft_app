@@ -1,0 +1,139 @@
+openapi: 3.0.3
+info:
+  title: mdraft API
+  description: Convert files to Markdown
+  version: 1.0.0
+servers:
+  - url: https://mdraft-web.onrender.com
+    description: Production server
+paths:
+  /api/convert:
+    post:
+      summary: Convert file to Markdown
+      description: Upload a file and convert it to Markdown format
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file: 
+                  type: string
+                  format: binary
+                  description: File to convert
+                callback_url: 
+                  type: string
+                  format: uri
+                  description: "Optional: we POST when done with HMAC (X-MDraft-Signature)"
+      responses:
+        '200':
+          description: Conversion completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  filename:
+                    type: string
+                  status:
+                    type: string
+                    enum: [COMPLETED, FAILED]
+                  markdown:
+                    type: string
+                  links:
+                    type: object
+        '202':
+          description: Conversion queued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  filename:
+                    type: string
+                  status:
+                    type: string
+                    enum: [QUEUED]
+                  callback_url:
+                    type: string
+                  links:
+                    type: object
+        '400':
+          description: Bad request
+        '401':
+          description: Missing or invalid API key
+        '413':
+          description: File too large
+        '415':
+          description: Unsupported file type
+        '429':
+          description: Rate limit exceeded
+  /api/conversions:
+    get:
+      summary: List conversions
+      description: Get a list of recent conversions
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 10
+            maximum: 100
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: List of conversions
+  /api/conversions/{id}:
+    get:
+      summary: Get conversion details
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Conversion details
+        '404':
+          description: Conversion not found
+  /api/conversions/{id}/markdown:
+    get:
+      summary: Get conversion markdown
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Markdown content
+          content:
+            text/markdown:
+              schema:
+                type: string
+        '404':
+          description: Conversion not found
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+    ApiKeyQuery:
+      type: apiKey
+      in: query
+      name: api_key
+security:
+  - ApiKeyAuth: []
+  - ApiKeyQuery: []
