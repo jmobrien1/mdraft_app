@@ -36,6 +36,41 @@ def api_convert():
     if not f:
         return jsonify(error="file is required (field name 'file')"), 400
 
+    queue_mode = os.getenv("QUEUE_MODE", "sync").lower()
+    use_gcs = os.getenv("USE_GCS", "0") in ("1","true","True")
+
+    if queue_mode == "async" and use_gcs:
+        # Save local tmp
+        filename = secure_filename(f.filename or "upload.bin")
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            f.save(tmp.name)
+            tmp_path = tmp.name
+        try:
+            # Upload to GCS
+            from google.cloud import storage
+            bucket_name = os.environ["GCS_BUCKET_NAME"]
+            client = storage.Client()
+            bucket = client.bucket(bucket_name)
+            object_key = f"uploads/{secure_filename(filename)}"
+            blob = bucket.blob(object_key)
+            blob.upload_from_filename(tmp_path)
+            gcs_uri = f"gs://{bucket_name}/{object_key}"
+
+            # Create DB row and enqueue
+            conv = Conversion(filename=filename, status="QUEUED")
+            db.session.add(conv); db.session.commit()
+
+            from celery_worker import celery
+            celery.send_task("convert_from_gcs", args=[conv.id, gcs_uri])
+
+            return jsonify(id=conv.id, filename=filename, status=conv.status,
+                           links={"self": f"/api/conversions/{conv.id}",
+                                  "markdown": f"/api/conversions/{conv.id}/markdown"}), 202
+        finally:
+            try: os.unlink(tmp_path)
+            except Exception: pass
+
+    # Fallback: current synchronous path
     filename = secure_filename(f.filename or "upload.bin")
     with tempfile.NamedTemporaryFile(delete=False) as tmp:
         f.save(tmp.name)

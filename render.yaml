@@ -5,9 +5,34 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 2 --threads 8 --timeout 120 wsgi:app
     healthCheckPath: /health
-    autoDeploy: true
+    preDeployCommand: |
+      flask --app app:create_app db upgrade || (
+        flask --app app:create_app db stamp head &&
+        flask --app app:create_app db migrate -m "init" &&
+        flask --app app:create_app db upgrade
+      )
     envVars:
       - key: FLASK_ENV
         value: production
       - key: SECRET_KEY
         generateValue: true
+      - key: QUEUE_MODE
+        value: sync
+      - key: USE_GCS
+        value: "0"
+  - type: worker
+    name: mdraft-worker
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: celery -A celery_worker.celery worker --loglevel=info --pool=threads --concurrency=4 --without-gossip --without-mingle
+    envVars:
+      - key: QUEUE_MODE
+        value: async
+      - key: CELERY_BROKER_URL
+        sync: false
+      - key: CELERY_RESULT_BACKEND
+        sync: false
+      - key: USE_GCS
+        value: "1"
+      - key: GCS_BUCKET_NAME
+        sync: false
