@@ -145,17 +145,17 @@ def create_app() -> Flask:
     os.makedirs(processed_path, exist_ok=True)
 
     # Register blueprints containing route definitions
-    from .routes import bp as main_blueprint  # type: ignore
+    from .ui import bp as ui_bp
+    app.register_blueprint(ui_bp)
 
-    app.register_blueprint(main_blueprint)
     from .health import bp as health_bp
     app.register_blueprint(health_bp)
 
     from .beta import bp as beta_bp
     app.register_blueprint(beta_bp)
 
-    from .ui import bp as ui_bp
-    app.register_blueprint(ui_bp)
+    from .routes import bp as main_blueprint  # type: ignore
+    app.register_blueprint(main_blueprint)
     
     # Register worker blueprint if running as worker service
     if os.environ.get("WORKER_SERVICE", "false").lower() == "true":
