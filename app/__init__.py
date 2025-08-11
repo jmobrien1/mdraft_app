@@ -95,7 +95,6 @@ def create_app() -> Flask:
     app.config["DOCAI_LOCATION"] = os.environ.get("DOCAI_LOCATION", "us")
     
     # Sentry configuration
-    import os
     import sentry_sdk
     from sentry_sdk.integrations.flask import FlaskIntegration
     dsn = os.getenv("SENTRY_DSN")
@@ -103,7 +102,6 @@ def create_app() -> Flask:
         sentry_sdk.init(dsn=dsn, integrations=[FlaskIntegration()], traces_sample_rate=0.1)
 
     # Flask-Limiter configuration
-    import os
     from flask_limiter import Limiter
     from flask_limiter.util import get_remote_address
 
