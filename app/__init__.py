@@ -33,6 +33,9 @@ limiter: Limiter = Limiter(key_func=get_remote_address)
 bcrypt: Bcrypt = Bcrypt()
 login_manager: LoginManager = LoginManager()
 
+# Register models with SQLAlchemy metadata so Alembic can see them
+from .models_conversion import Conversion  # noqa: F401
+
 
 class JSONFormatter(logging.Formatter):
     """Format log records as JSON with optional correlation ID support."""
