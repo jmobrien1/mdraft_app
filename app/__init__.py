@@ -126,6 +126,21 @@ def create_app() -> Flask:
     login_manager.init_app(app)
     limiter.init_app(app)
 
+    # --- Demo-safe auth disable (Flask-Login) ---
+    # We don't need authentication for the beta UI. Prevent Flask-Login
+    # from raising "Missing user_loader or request_loader".
+    app.config.setdefault("LOGIN_DISABLED", True)
+    try:
+        # If a LoginManager was attached, give it a no-op user_loader.
+        lm = getattr(app, "login_manager", None)
+        if lm is not None and getattr(lm, "user_callback", None) is None and getattr(lm, "request_callback", None) is None:
+            @lm.user_loader
+            def _noop_user_loader(_):
+                return None
+    except Exception:
+        pass
+    # --- end auth disable ---
+
     # Set up structured logging when not in debug mode.  In debug mode
     # Flask's built-in debugger provides human-readable logs.
     if not app.debug:
