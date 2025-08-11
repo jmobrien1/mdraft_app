@@ -50,3 +50,19 @@ services:
         sync: false
       - key: SENTRY_ENVIRONMENT
         value: production
+
+  - type: cron
+    name: mdraft-cleanup
+    env: python
+    schedule: "0 6 * * *"           # daily at 06:00 UTC
+    buildCommand: pip install -r requirements.txt
+    startCommand: flask --app app:create_app cleanup
+    envVars:
+      - key: GOOGLE_APPLICATION_CREDENTIALS
+        value: /etc/secrets/gcp.json
+      - key: GCS_BUCKET_NAME
+        sync: false
+      - key: CLEANUP_DELETE_GCS
+        value: "1"
+      - key: RETENTION_DAYS
+        value: "30"

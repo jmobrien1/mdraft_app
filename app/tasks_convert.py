@@ -3,6 +3,7 @@ from celery_worker import celery
 from app import create_app, db
 from .models_conversion import Conversion
 from .api_convert import _convert_with_markitdown
+from .quality import clean_markdown, pdf_text_fallback
 
 app = create_app()
 
@@ -27,8 +28,11 @@ def convert_from_gcs(conv_id: str, gcs_uri: str):
             tmp_path = tmp.name
 
         try:
-            markdown = _convert_with_markitdown(tmp_path)
-            conv.markdown = markdown
+            markdown = _convert_with_markitdown(tmp_path) or ""
+            if not markdown and conv.original_mime == "application/pdf":
+                fb = pdf_text_fallback(tmp_path)
+                if fb: markdown = fb
+            conv.markdown = clean_markdown(markdown)
             conv.status = "COMPLETED"
             db.session.commit()
         except Exception as e:
@@ -38,3 +42,11 @@ def convert_from_gcs(conv_id: str, gcs_uri: str):
         finally:
             try: os.unlink(tmp_path)
             except Exception: pass
+            
+            # Delete GCS object to save storage costs
+            delete_on_done = os.getenv("DELETE_GCS_ON_COMPLETE", "1").lower() in ("1","true","yes")
+            if delete_on_done:
+                try:
+                    bucket.delete_blob(blob.path if hasattr(blob, "path") else blob.name)
+                except Exception:
+                    pass

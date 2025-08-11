@@ -3,12 +3,13 @@ import tempfile
 import uuid
 from flask import Blueprint, request, jsonify, Response
 from werkzeug.utils import secure_filename
-from datetime import timezone
+from datetime import datetime, timedelta, timezone
 
 from . import db, limiter
 from .models_conversion import Conversion
 from .security import sniff_category, size_ok
 from .auth_api import require_api_key_if_configured, rate_limit_for_convert, rate_limit_key_func
+from .quality import sha256_file, clean_markdown, pdf_text_fallback
 
 bp = Blueprint("api_convert", __name__, url_prefix="/api")
 
@@ -62,6 +63,28 @@ def api_convert():
             try: os.unlink(tmp_path)
             except Exception: pass
             return jsonify(error="payload_too_large", category=category), 413
+
+        file_hash = sha256_file(tmp_path)
+        original_size = os.path.getsize(tmp_path)
+        original_mime = mime or fallback_mime or "application/octet-stream"
+
+        # Dedupe unless explicitly forced
+        force = (request.args.get("force") in ("1","true","yes"))
+        if not force:
+            existing = Conversion.query.filter_by(sha256=file_hash, status="COMPLETED").order_by(Conversion.created_at.desc()).first()
+            if existing and existing.markdown:
+                return jsonify(
+                    id=existing.id,
+                    filename=existing.filename,
+                    status="COMPLETED",
+                    duplicate_of=existing.id,
+                    links={
+                        "self": f"/api/conversions/{existing.id}",
+                        "markdown": f"/api/conversions/{existing.id}/markdown",
+                        "view": f"/v/{existing.id}",
+                    },
+                    note="deduplicated"
+                ), 200
         
         try:
             from google.cloud import storage
@@ -73,7 +96,19 @@ def api_convert():
             blob.upload_from_filename(tmp_path)
             gcs_uri = f"gs://{bucket_name}/{object_key}"
 
-            conv = Conversion(filename=filename, status="QUEUED")
+            conv.stored_uri = gcs_uri
+            db.session.commit()
+
+            ttl_days = int(os.getenv("RETENTION_DAYS", "30"))
+            conv = Conversion(
+                filename=filename,
+                status="QUEUED",
+                sha256=file_hash,
+                original_mime=original_mime,
+                original_size=original_size,
+                stored_uri=None,  # set below
+                expires_at=(datetime.utcnow() + timedelta(days=ttl_days)) if ttl_days > 0 else None,
+            )
             db.session.add(conv); db.session.commit()
 
             from celery_worker import celery
@@ -110,9 +145,47 @@ def api_convert():
         except Exception: pass
         return jsonify(error="payload_too_large", category=category), 413
 
+    file_hash = sha256_file(tmp_path)
+    original_size = os.path.getsize(tmp_path)
+    original_mime = mime or fallback_mime or "application/octet-stream"
+
+    # Dedupe unless explicitly forced
+    force = (request.args.get("force") in ("1","true","yes"))
+    if not force:
+        existing = Conversion.query.filter_by(sha256=file_hash, status="COMPLETED").order_by(Conversion.created_at.desc()).first()
+        if existing and existing.markdown:
+            return jsonify(
+                id=existing.id,
+                filename=existing.filename,
+                status="COMPLETED",
+                duplicate_of=existing.id,
+                links={
+                    "self": f"/api/conversions/{conv.id}",
+                    "markdown": f"/api/conversions/{existing.id}/markdown",
+                    "view": f"/v/{existing.id}",
+                },
+                note="deduplicated"
+            ), 200
+
     try:
-        markdown = _convert_with_markitdown(tmp_path)
-        conv = Conversion(filename=filename, status="COMPLETED", markdown=markdown)
+        markdown = _convert_with_markitdown(tmp_path) or ""
+        if not markdown and original_mime == "application/pdf":
+            fb = pdf_text_fallback(tmp_path)
+            if fb:
+                markdown = fb
+        markdown = clean_markdown(markdown)
+
+        ttl_days = int(os.getenv("RETENTION_DAYS", "30"))
+        conv = Conversion(
+            filename=filename,
+            status="COMPLETED",
+            markdown=markdown,
+            sha256=file_hash,
+            original_mime=original_mime,
+            original_size=original_size,
+            stored_uri=None,
+            expires_at=(datetime.utcnow() + timedelta(days=ttl_days)) if ttl_days > 0 else None,
+        )
         db.session.add(conv)
         db.session.commit()
         return jsonify(
@@ -126,7 +199,17 @@ def api_convert():
             },
         ), 200
     except Exception as e:
-        conv = Conversion(filename=filename, status="FAILED", error=str(e))
+        ttl_days = int(os.getenv("RETENTION_DAYS", "30"))
+        conv = Conversion(
+            filename=filename,
+            status="FAILED",
+            error=str(e),
+            sha256=file_hash,
+            original_mime=original_mime,
+            original_size=original_size,
+            stored_uri=None,
+            expires_at=(datetime.utcnow() + timedelta(days=ttl_days)) if ttl_days > 0 else None,
+        )
         db.session.add(conv)
         db.session.commit()
         return jsonify(
