@@ -14,25 +14,25 @@
    ```
    pip install -r requirements.txt
    ```
-5. Start Command:
+5) Start Command:
    ```
    gunicorn --bind 0.0.0.0:$PORT --workers 2 --threads 8 --timeout 120 wsgi:app
    ```
-6. Advanced → Health Check Path: `/health`
-7. Environment Variables:
+6) Advanced → Health Check Path: `/health`
+7) Environment Variables:
    - `FLASK_ENV` = `production`
-   - `SECRET_KEY` = (Generate or any long random string)
-8. Click **Create Web Service**. Wait for **Live**.
+   - `SECRET_KEY` = (Generate or paste any long random string)
+8) Click **Create Web Service**. Wait until it shows **Live**.
 
 ## Smoke tests
-- Health: visit `https://<your-app>.onrender.com/health` → expect `{"status":"ok"}`
+- Health:
+  Visit `https://<your-app>.onrender.com/health` → expect `{"status":"ok"}`
 - Beta convert (from your terminal):
   ```bash
   echo "hello mdraft" > /tmp/hello.txt
   curl -s -X POST -F "file=@/tmp/hello.txt" https://<your-app>.onrender.com/beta/convert | python3 -m json.tool
   ```
-  Expect a JSON with `markdown` field. If MarkItDown is not available or fails, you'll get a `warning` and a text preview.
 
 ## Notes
-- You can add DB and a Celery worker later without changing this Start Command.
-- If you see "No open ports detected", verify the Start Command and that Gunicorn starts cleanly.
+- If you see "No open ports detected", re-check the Start Command and that `wsgi.py` exists.
+- You can add Postgres and a Celery worker later without changing this Start Command.
