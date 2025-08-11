@@ -104,7 +104,6 @@ def create_app() -> Flask:
     # Flask-Limiter configuration
     from flask_limiter import Limiter
     from flask_limiter.util import get_remote_address
-    import os
 
     app.config.setdefault("RATELIMIT_HEADERS_ENABLED", True)
 
