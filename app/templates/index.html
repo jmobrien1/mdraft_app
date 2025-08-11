@@ -78,6 +78,12 @@
             location.origin + item.links.markdown
           ).then(() => { copy.textContent = 'Copied!'; setTimeout(()=>copy.textContent='Copy link',1000); });
 
+          const v = document.createElement('a');
+          v.href = '/v/' + item.id;
+          v.textContent = 'View';
+          v.style.marginLeft = '8px';
+          li.appendChild(v);
+
           li.appendChild(a);
           li.appendChild(copy);
           list.appendChild(li);

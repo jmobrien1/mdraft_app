@@ -1,0 +1,15 @@
+<!doctype html>
+<html><head>
+  <meta charset="utf-8"/>
+  <title>{{ filename }} — mdraft</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <style> body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;max-width:840px;margin:40px auto;padding:0 16px;} .content{line-height:1.6;} pre,code{font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;} a{color:#0ea5e9;} </style>
+</head><body>
+  <h1>{{ filename }}</h1>
+  <div id="md" class="content"></div>
+  <script>
+    const raw = {{ markdown|tojson }};
+    document.getElementById('md').innerHTML = marked.parse(raw || "");
+  </script>
+</body></html>

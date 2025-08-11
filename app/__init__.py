@@ -180,6 +180,9 @@ def create_app() -> Flask:
     from .api_queue import bp as queue_bp
     app.register_blueprint(queue_bp)
 
+    from .view import bp as view_bp
+    app.register_blueprint(view_bp)
+
     from .routes import bp as main_blueprint  # type: ignore
     app.register_blueprint(main_blueprint)
     
