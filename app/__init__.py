@@ -104,6 +104,7 @@ def create_app() -> Flask:
     # Flask-Limiter configuration
     from flask_limiter import Limiter
     from flask_limiter.util import get_remote_address
+    import os
 
     app.config.setdefault("RATELIMIT_HEADERS_ENABLED", True)
 
@@ -115,7 +116,6 @@ def create_app() -> Flask:
             or os.environ.get("CELERY_BROKER_URL")
         ),
         default_limits=[os.environ.get("GLOBAL_RATE_LIMIT", "120 per minute")],
-        strategy="fixed-window-elastic-expiry",
     )
     limiter.init_app(app)
 
