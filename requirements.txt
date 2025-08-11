@@ -33,4 +33,4 @@ reportlab==4.0.4
 markitdown[all]==0.1.2
 
 # Monitoring and observability
-sentry-sdk[flask]==1.40.0
+sentry-sdk[flask]==2.9.0

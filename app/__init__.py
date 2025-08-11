@@ -100,27 +100,12 @@ def create_app() -> Flask:
     app.config["DOCAI_LOCATION"] = os.environ.get("DOCAI_LOCATION", "us")
     
     # Sentry configuration
-    sentry_dsn = os.environ.get("SENTRY_DSN")
-    if sentry_dsn:
-        try:
-            import sentry_sdk
-            from sentry_sdk.integrations.flask import FlaskIntegration
-            from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
-            
-            sentry_sdk.init(
-                dsn=sentry_dsn,
-                integrations=[
-                    FlaskIntegration(),
-                    SqlalchemyIntegration(),
-                ],
-                traces_sample_rate=0.1,
-                environment=os.environ.get("FLASK_ENV", "production"),
-            )
-            app.logger.info("Sentry initialized successfully")
-        except ImportError:
-            app.logger.warning("Sentry SDK not available, skipping Sentry initialization")
-        except Exception as e:
-            app.logger.error(f"Failed to initialize Sentry: {e}")
+    import os
+    import sentry_sdk
+    from sentry_sdk.integrations.flask import FlaskIntegration
+    dsn = os.getenv("SENTRY_DSN")
+    if dsn:
+        sentry_sdk.init(dsn=dsn, integrations=[FlaskIntegration()], traces_sample_rate=0.1)
     
     # Rate limiting is configured at the module level with Redis storage
 
