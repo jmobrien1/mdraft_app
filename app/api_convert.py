@@ -14,6 +14,13 @@ from .webhooks import deliver_webhook
 
 bp = Blueprint("api_convert", __name__, url_prefix="/api")
 
+def _links(cid: str):
+    return {
+        "self": f"/api/conversions/{cid}",
+        "markdown": f"/api/conversions/{cid}/markdown",
+        "view": f"/v/{cid}",
+    }
+
 def _convert_with_markitdown(path: str) -> str:
     try:
         from markitdown import MarkItDown
@@ -42,6 +49,10 @@ def api_convert():
     f = request.files.get("file")
     if not f:
         return jsonify(error="file is required (field name 'file')"), 400
+
+    # Initialize conv and conv_id to prevent UnboundLocalError
+    conv = None
+    conv_id = None
 
     filename = secure_filename(f.filename or "upload.bin")
     queue_mode = os.getenv("QUEUE_MODE", "sync").lower()
@@ -88,11 +99,7 @@ def api_convert():
                     filename=existing.filename,
                     status="COMPLETED",
                     duplicate_of=existing.id,
-                    links={
-                        "self": f"/api/conversions/{existing.id}",
-                        "markdown": f"/api/conversions/{existing.id}/markdown",
-                        "view": f"/v/{existing.id}",
-                    },
+                    links=_links(existing.id),
                     note="deduplicated"
                 ), 200
         
@@ -106,9 +113,6 @@ def api_convert():
             blob.upload_from_filename(tmp_path)
             gcs_uri = f"gs://{bucket_name}/{object_key}"
 
-            conv.stored_uri = gcs_uri
-            db.session.commit()
-
             ttl_days = int(os.getenv("RETENTION_DAYS", "30"))
             conv = Conversion(
                 filename=filename,
@@ -119,24 +123,41 @@ def api_convert():
                 stored_uri=None,  # set below
                 expires_at=(datetime.utcnow() + timedelta(days=ttl_days)) if ttl_days > 0 else None,
             )
-            db.session.add(conv); db.session.commit()
+            db.session.add(conv)
+            db.session.commit()
+            
+            # Set conv_id immediately after committing
+            conv_id = conv.id
+
+            conv.stored_uri = gcs_uri
+            db.session.commit()
 
             from celery_worker import celery
             celery.send_task("convert_from_gcs", args=[conv.id, gcs_uri, filename, callback_url])
 
             resp = {
-                "id": conv.id,
+                "id": conv_id,
                 "filename": filename,
                 "status": conv.status,
-                "links": {
-                    "self": f"/api/conversions/{conv.id}",
-                    "markdown": f"/api/conversions/{conv.id}/markdown",
-                    "view": f"/v/{conv.id}",
-                },
+                "links": _links(conv_id),
             }
             if callback_url:
                 resp["callback_url"] = callback_url
             return jsonify(resp), 202
+        except Exception as e:
+            current_app.logger.exception("convert_failed: %s", e)
+            if conv is not None:
+                try:
+                    conv.status = "FAILED"
+                    conv.error = str(e)
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
+            resp = {"error": "server_error"}
+            if conv_id:
+                resp["id"] = conv_id
+                resp["links"] = {"self": f"/api/conversions/{conv_id}"}
+            return jsonify(resp), 500
         finally:
             try: os.unlink(tmp_path)
             except Exception: pass
@@ -172,11 +193,7 @@ def api_convert():
                 filename=existing.filename,
                 status="COMPLETED",
                 duplicate_of=existing.id,
-                links={
-                    "self": f"/api/conversions/{conv.id}",
-                    "markdown": f"/api/conversions/{existing.id}/markdown",
-                    "view": f"/v/{existing.id}",
-                },
+                links=_links(existing.id),
                 note="deduplicated"
             ), 200
 
@@ -202,20 +219,19 @@ def api_convert():
         db.session.add(conv)
         db.session.commit()
         
+        # Set conv_id immediately after committing
+        conv_id = conv.id
+        
         if callback_url:
             try:
                 code, _ = deliver_webhook(
                     callback_url,
                     "conversion.completed",
                     {
-                        "id": conv.id,
+                        "id": conv_id,
                         "filename": conv.filename,
                         "status": "COMPLETED",
-                        "links": {
-                            "self": f"/api/conversions/{conv.id}",
-                            "markdown": f"/api/conversions/{conv.id}/markdown",
-                            "view": f"/v/{conv.id}",
-                        },
+                        "links": _links(conv_id),
                     },
                 )
                 current_app.logger.info("webhook_delivered_sync", extra={"url": callback_url, "code": code})
@@ -223,39 +239,25 @@ def api_convert():
                 current_app.logger.exception("webhook_sync_error: %s", e)
         
         return jsonify(
-            id=conv.id,
+            id=conv_id,
             filename=filename,
             status=conv.status,
-            links={
-                "self": f"/api/conversions/{conv.id}",
-                "markdown": f"/api/conversions/{conv.id}/markdown",
-                "view": f"/v/{conv.id}",
-            },
+            links=_links(conv_id),
         ), 200
     except Exception as e:
-        ttl_days = int(os.getenv("RETENTION_DAYS", "30"))
-        conv = Conversion(
-            filename=filename,
-            status="FAILED",
-            error=str(e),
-            sha256=file_hash,
-            original_mime=original_mime,
-            original_size=original_size,
-            stored_uri=None,
-            expires_at=(datetime.utcnow() + timedelta(days=ttl_days)) if ttl_days > 0 else None,
-        )
-        db.session.add(conv)
-        db.session.commit()
-        return jsonify(
-            id=conv.id,
-            filename=filename,
-            status=conv.status,
-            error=str(e),
-            links={
-                "self": f"/api/conversions/{conv.id}",
-                "view": f"/v/{conv.id}",
-            }
-        ), 200
+        current_app.logger.exception("convert_failed: %s", e)
+        if conv is not None:
+            try:
+                conv.status = "FAILED"
+                conv.error = str(e)
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+        resp = {"error": "server_error"}
+        if conv_id:
+            resp["id"] = conv_id
+            resp["links"] = {"self": f"/api/conversions/{conv_id}"}
+        return jsonify(resp), 500
     finally:
         try: os.unlink(tmp_path)
         except Exception: pass
