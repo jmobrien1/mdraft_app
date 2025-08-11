@@ -1,16 +1,16 @@
 # Deploying mdraft_app to Render (Tonight's Beta)
 
-## What this deploy includes
+## What this includes
 - Flask app served by Gunicorn
-- `/health` endpoint
-- `/beta/convert` endpoint — upload a file and get Markdown (uses MarkItDown if available; falls back to a text preview)
-- No DB or Celery required to boot
+- `/health` endpoint for Render health checks
+- `/beta/convert` endpoint (upload a file, receive Markdown or a safe preview)
+- No database or Celery required to boot
 
-## Render — Web Service (one time)
-1. Go to https://render.com → **New +** → **Web Service**
-2. Connect GitHub → pick **jmobrien1/mdraft_app** (branch: `main`)
-3. Name: `mdraft-web`
-4. Build Command:
+## Web Service (one-time)
+1) Go to https://render.com → **New +** → **Web Service**
+2) Connect GitHub → select **jmobrien1/mdraft_app** (branch: `main`)
+3) Name: `mdraft-web`
+4) Build Command:
    ```
    pip install -r requirements.txt
    ```
