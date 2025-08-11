@@ -2,12 +2,13 @@
 
 ## What this deploy includes
 - Flask app served by Gunicorn
-- `/health` endpoint so Render sees the service as healthy
-- No DB or worker required to boot; you can add them later
+- `/health` endpoint
+- `/beta/convert` endpoint — upload a file and get Markdown (uses MarkItDown if available; falls back to a text preview)
+- No DB or Celery required to boot
 
-## One-time steps on Render
-1. Go to https://render.com → **New +** → **Web Service**.
-2. Connect GitHub and select repo **jmobrien1/mdraft_app** (branch: `main`).
+## Render — Web Service (one time)
+1. Go to https://render.com → **New +** → **Web Service**
+2. Connect GitHub → pick **jmobrien1/mdraft_app** (branch: `main`)
 3. Name: `mdraft-web`
 4. Build Command:
    ```
