@@ -19,32 +19,20 @@
    gunicorn --bind 0.0.0.0:$PORT --workers 2 --threads 8 --timeout 120 wsgi:app
    ```
 6. Advanced → Health Check Path: `/health`
-7. Environment Variables → Add:
+7. Environment Variables:
    - `FLASK_ENV` = `production`
-   - `SECRET_KEY` = (click Generate or paste any long random string)
+   - `SECRET_KEY` = (Generate or any long random string)
+8. Click **Create Web Service**. Wait for **Live**.
 
-Click **Create Web Service** and wait for it to say **Live**.
+## Smoke tests
+- Health: visit `https://<your-app>.onrender.com/health` → expect `{"status":"ok"}`
+- Beta convert (from your terminal):
+  ```bash
+  echo "hello mdraft" > /tmp/hello.txt
+  curl -s -X POST -F "file=@/tmp/hello.txt" https://<your-app>.onrender.com/beta/convert | python3 -m json.tool
+  ```
+  Expect a JSON with `markdown` field. If MarkItDown is not available or fails, you'll get a `warning` and a text preview.
 
-## Smoke test
-Visit your Render URL in a browser and append `/health`. You should see:
-```json
-{"status":"ok"}
-```
-
-## If you need Postgres later (optional)
-- Create a Render PostgreSQL instance, copy its External Connection String.
-- Add `DATABASE_URL` to the Web Service Environment.
-- Web Service → Settings → Post-deploy Command:
-  ```
-  flask db upgrade || (flask db stamp head && flask db migrate -m "init" && flask db upgrade)
-  ```
-- Redeploy.
-
-## If you need a Celery worker later (optional)
-- New + → Background Worker → same repo/branch
-- Build: `pip install -r requirements.txt`
-- Start:
-  ```
-  celery -A celery_worker.celery worker --loglevel=info --pool=threads --concurrency=4 --without-gossip --without-mingle
-  ```
-- Set `CELERY_BROKER_URL` and `CELERY_RESULT_BACKEND` to your Redis `rediss://...` URL.
+## Notes
+- You can add DB and a Celery worker later without changing this Start Command.
+- If you see "No open ports detected", verify the Start Command and that Gunicorn starts cleanly.
