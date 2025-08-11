@@ -10,9 +10,10 @@ A Flask-based SaaS application that converts documents (PDF, DOCX) to Markdown f
   - Google Document AI for scanned documents and OCR
 - **Background Processing**: Asynchronous job processing with status tracking
 - **Google Cloud Integration**: 
-  - Cloud Storage for file management
+  - Cloud Storage for file management with streaming uploads
   - Cloud Tasks for background job processing
   - Document AI for advanced text extraction
+  - V4 signed URLs for secure downloads
 - **RESTful API**: Clean JSON API for integration
 - **Rate Limiting**: Built-in protection against abuse
 - **Database Migrations**: Alembic-based schema management
@@ -47,10 +48,10 @@ A Flask-based SaaS application that converts documents (PDF, DOCX) to Markdown f
 - **ORM**: SQLAlchemy with Alembic migrations
 - **Cloud Services**: Google Cloud Platform
   - Cloud SQL (PostgreSQL)
-  - Cloud Storage
+  - Cloud Storage (with streaming uploads)
   - Cloud Tasks
   - Document AI
-- **Security**: Flask-Bcrypt, rate limiting
+- **Security**: Flask-Bcrypt, rate limiting, V4 signed URLs
 - **File Processing**: filetype, subprocess
 
 ## Quick Start
@@ -122,8 +123,12 @@ GCS_BUCKET_NAME=mdraft-uploads
 GCS_PROCESSED_BUCKET_NAME=mdraft-processed
 
 # Google Cloud Tasks
-CLOUD_TASKS_QUEUE_ID=mdraft-conversion-queue
+CLOUD_TASKS_QUEUE_NAME=mdraft-conversion-queue
 CLOUD_TASKS_LOCATION=us-central1
+
+# Worker Service Configuration
+WORKER_SERVICE_URL=https://mdraft-worker-xxxxx-uc.a.run.app
+WORKER_INVOKER_SA_EMAIL=mdraft-invoker@your-project-id.iam.gserviceaccount.com
 
 # Google Document AI
 DOCAI_PROCESSOR_ID=your-docai-processor-id
@@ -265,6 +270,38 @@ gcloud iam service-accounts keys create service-account-key.json \
   --iam-account=mdraft-worker@YOUR_PROJECT_ID.iam.gserviceaccount.com
 ```
 
+## Data Retention
+
+### Lifecycle Management
+
+The application includes automated data retention policies to manage storage costs and maintain data hygiene:
+
+- **Upload Files**: Automatically deleted after 30 days
+- **Processed Files**: Automatically deleted after 30 days
+- **Job Records**: Retained in database for audit purposes
+
+### Apply Lifecycle Policies
+
+```bash
+# Apply to uploads bucket
+gcloud storage buckets update gs://$GCS_BUCKET_NAME --lifecycle-file=infrastructure/gcs/lifecycle.json
+
+# Apply to processed bucket  
+gcloud storage buckets update gs://$GCS_PROCESSED_BUCKET_NAME --lifecycle-file=infrastructure/gcs/lifecycle.json
+```
+
+### Rollback Lifecycle Policies
+
+```bash
+# Clear lifecycle policy from uploads bucket
+gcloud storage buckets update gs://$GCS_BUCKET_NAME --clear-lifecycle
+
+# Clear lifecycle policy from processed bucket
+gcloud storage buckets update gs://$GCS_PROCESSED_BUCKET_NAME --clear-lifecycle
+```
+
+See `infrastructure/gcs/README.md` for detailed lifecycle management commands.
+
 ## Database Migrations
 
 ### Create a new migration
@@ -295,6 +332,10 @@ mdraft_app/
 │   ├── conversion.py        # Document conversion logic
 │   ├── storage.py           # Google Cloud Storage integration
 │   └── utils.py             # Utility functions
+├── infrastructure/
+│   └── gcs/
+│       ├── lifecycle.json   # GCS lifecycle policy
+│       └── README.md        # Lifecycle management docs
 ├── migrations/              # Database migrations
 ├── uploads/                 # Local file uploads (gitignored)
 ├── processed/               # Local processed files (gitignored)
@@ -319,21 +360,119 @@ python -m pytest
 
 # Run with coverage
 python -m pytest --cov=app
+
+# Run E2E validation
+python tools/validate_e2e.py
+
+# Run worker service validation
+python tools/validate_e2e.py --worker
 ```
 
 ## Production Deployment
 
-### Google Cloud Run
+### Main Application (Cloud Run)
 
-1. **Create Dockerfile**
-2. **Build and deploy**
+1. **Build and deploy the main application**
    ```bash
    gcloud run deploy mdraft \
      --source . \
      --platform managed \
      --region us-central1 \
-     --allow-unauthenticated
+     --allow-unauthenticated \
+     --memory 1Gi \
+     --cpu 1 \
+     --max-instances 10
    ```
+
+### Worker Service (Private Cloud Run)
+
+The worker service processes document conversion tasks from Cloud Tasks. It's deployed as a private service that only accepts authenticated requests.
+
+1. **Create service accounts**
+   ```bash
+   # Create worker service account
+   gcloud iam service-accounts create mdraft-worker \
+     --display-name="mdraft Worker Service"
+   
+   # Create invoker service account for Cloud Tasks
+   gcloud iam service-accounts create mdraft-invoker \
+     --display-name="mdraft Task Invoker"
+   ```
+
+2. **Grant permissions**
+   ```bash
+   # Grant worker service account access to GCS, Document AI, and Cloud SQL
+   gcloud projects add-iam-policy-binding $PROJECT_ID \
+     --member="serviceAccount:mdraft-worker@$PROJECT_ID.iam.gserviceaccount.com" \
+     --role="roles/storage.objectViewer"
+   
+   gcloud projects add-iam-policy-binding $PROJECT_ID \
+     --member="serviceAccount:mdraft-worker@$PROJECT_ID.iam.gserviceaccount.com" \
+     --role="roles/documentai.apiUser"
+   
+   gcloud projects add-iam-policy-binding $PROJECT_ID \
+     --member="serviceAccount:mdraft-worker@$PROJECT_ID.iam.gserviceaccount.com" \
+     --role="roles/cloudsql.client"
+   
+   # Grant invoker service account permission to invoke worker service
+   gcloud run services add-iam-policy-binding mdraft-worker \
+     --region=us-central1 \
+     --member="serviceAccount:mdraft-invoker@$PROJECT_ID.iam.gserviceaccount.com" \
+     --role="roles/run.invoker"
+   ```
+
+3. **Deploy using Cloud Build**
+   ```bash
+   # Set substitution variables
+   gcloud builds submit --config=cloudbuild_worker.yaml \
+     --substitutions=_DATABASE_URL="postgresql://user:pass@host:5432/db",_GCS_BUCKET_NAME="mdraft-uploads",_GCS_PROCESSED_BUCKET_NAME="mdraft-processed",_DOCAI_PROCESSOR_ID="projects/$PROJECT_ID/locations/us/processors/PROCESSOR_ID"
+   ```
+
+4. **Alternative: Deploy manually**
+   ```bash
+   # Build and push image
+   docker build -t gcr.io/$PROJECT_ID/mdraft-worker:$COMMIT_SHA .
+   docker push gcr.io/$PROJECT_ID/mdraft-worker:$COMMIT_SHA
+   
+   # Deploy to Cloud Run
+   gcloud run deploy mdraft-worker \
+     --image gcr.io/$PROJECT_ID/mdraft-worker:$COMMIT_SHA \
+     --region us-central1 \
+     --platform managed \
+     --no-allow-unauthenticated \
+     --service-account mdraft-worker@$PROJECT_ID.iam.gserviceaccount.com \
+     --memory 2Gi \
+     --cpu 2 \
+     --max-instances 10 \
+     --timeout 3600 \
+     --set-env-vars WORKER_SERVICE=true,DATABASE_URL=$DATABASE_URL,GCS_BUCKET_NAME=$GCS_BUCKET_NAME,GCS_PROCESSED_BUCKET_NAME=$GCS_PROCESSED_BUCKET_NAME,DOCAI_PROCESSOR_ID=$DOCAI_PROCESSOR_ID,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,CLOUD_TASKS_QUEUE_NAME=mdraft-conversion-queue,CLOUD_TASKS_LOCATION=us-central1,WORKER_SERVICE_URL=https://mdraft-worker-xxxxx-uc.a.run.app,WORKER_INVOKER_SA_EMAIL=mdraft-invoker@$PROJECT_ID.iam.gserviceaccount.com
+   ```
+
+### Cloud Tasks Queue Configuration
+
+1. **Create the queue**
+   ```bash
+   gcloud tasks queues create mdraft-conversion-queue \
+     --location=us-central1
+   ```
+
+2. **Configure retry policy**
+   ```bash
+   gcloud tasks queues update mdraft-conversion-queue \
+     --location=us-central1 \
+     --max-attempts=5 \
+     --min-backoff=20s \
+     --max-backoff=600s \
+     --max-doublings=3
+   ```
+
+3. **Verify configuration**
+   ```bash
+   gcloud tasks queues describe mdraft-conversion-queue \
+     --location=us-central1
+   ```
+
+See `infrastructure/tasks/README.md` for detailed queue management commands.
 
 ### Environment Variables for Production
 
@@ -349,13 +488,67 @@ CLOUD_TASKS_QUEUE_ID=mdraft-conversion-queue
 DOCAI_PROCESSOR_ID=<your-processor-id>
 ```
 
+### Production Checklist
+
+- [ ] Enable required Google Cloud APIs
+- [ ] Create and configure GCS buckets
+- [ ] Set up Document AI processor
+- [ ] Create Cloud Tasks queue
+- [ ] Configure service account with proper permissions
+- [ ] Set up Cloud SQL instance
+- [ ] Apply lifecycle policies for data retention
+- [ ] Configure monitoring and alerting
+- [ ] Set up SSL/TLS certificates
+- [ ] Configure backup and disaster recovery
+
+## Cost Guardrails
+
+The application includes several cost control mechanisms to prevent unexpected charges:
+
+### Feature Flags
+
+- **PRO_CONVERSION_ENABLED**: Master kill switch for Document AI processing
+  - Set to `false` to disable all Document AI calls
+  - Automatically falls back to markitdown for all conversions
+  - Can be changed without code deployment
+
+### Cost Control Features
+
+- **Dual Engine Routing**: Automatically chooses the most cost-effective conversion engine
+  - Document AI: Used only for PDFs (scanned documents)
+  - markitdown: Used for all other file types (free)
+- **Automatic Fallbacks**: If Document AI fails, falls back to markitdown
+- **Timeout Limits**: 120-second timeout prevents runaway processes
+- **Resource Limits**: Cloud Run instances have memory and CPU limits
+
+### Emergency Cost Controls
+
+```bash
+# Disable Document AI processing (emergency kill switch)
+gcloud run services update mdraft \
+  --set-env-vars PRO_CONVERSION_ENABLED=false \
+  --region=us-central1
+
+# Scale down services to minimize costs
+gcloud run services update mdraft \
+  --max-instances=1 \
+  --region=us-central1
+```
+
+### Cost Monitoring
+
+- **Billing Alerts**: Set up budget alerts in Google Cloud Console
+- **Usage Monitoring**: Track Document AI API calls and costs
+- **Resource Quotas**: Set limits on Cloud Run instances and API calls
+
 ## Security Considerations
 
 - **File Upload Validation**: MIME-type checking using magic numbers
 - **Rate Limiting**: Built-in protection against abuse
 - **Secure Headers**: Configured for production deployment
 - **Environment Variables**: Sensitive data stored in environment
-- **Signed URLs**: Temporary, expiring download links
+- **Signed URLs**: Temporary, expiring download links (V4)
+- **Streaming Uploads**: Direct to GCS without temporary files
 
 ## Monitoring and Logging
 
@@ -363,6 +556,38 @@ DOCAI_PROCESSOR_ID=<your-processor-id>
 - **Correlation IDs**: Request tracking across services
 - **Health Checks**: Database and service monitoring
 - **Error Handling**: Comprehensive exception management
+- **GCS Lifecycle**: Automated data retention and cleanup
+
+## Resilience Drills
+
+Regular operational drills help ensure the team is prepared for incidents:
+
+### Scheduled Drills
+
+1. **Monthly Rollback Drill**: Practice rolling back Cloud Run revisions
+2. **Quarterly Database Rollback**: Practice rolling back database migrations
+3. **Bi-monthly Kill Switch Drill**: Practice using the cost control kill switch
+
+### Drill Procedures
+
+See `OPERATIONS.md` for detailed drill procedures including:
+- Intentional error deployment and rollback
+- Database migration rollback practice
+- Feature flag kill switch activation
+- Emergency cost control procedures
+
+### Drill Benefits
+
+- **Team Preparedness**: Ensures familiarity with rollback procedures
+- **Procedure Validation**: Tests that documented procedures work
+- **Tool Familiarity**: Builds confidence with gcloud and flask commands
+- **Incident Response**: Reduces time to recovery during real incidents
+
+### Post-Drill Activities
+
+- Document lessons learned
+- Update procedures based on findings
+- Schedule follow-up drills for areas needing improvement
 
 ## Contributing
 

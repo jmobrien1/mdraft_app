@@ -1,0 +1,10 @@
+Sample Document for mdraft Testing
+This is a sample text file created for end-to-end validation.
+It contains multiple lines of text that should be converted to Markdown.
+The conversion process should preserve the content structure.
+This document tests the complete workflow:
+1. File upload to the web service
+2. Background processing by the worker
+3. Conversion to Markdown format
+4. Download of the processed result
+If you can read this, the validation script worked!
