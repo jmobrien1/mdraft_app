@@ -11,6 +11,9 @@ workers.
 """
 from __future__ import annotations
 
+import os as _os
+ENV = _os.environ
+
 import logging
 import json
 import os
@@ -71,11 +74,11 @@ def create_app() -> Flask:
     app = Flask(__name__)
 
     # Application configuration
-    app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "changeme")
+    app.config["SECRET_KEY"] = ENV.get("SECRET_KEY", "changeme")
     app.config.setdefault("MAX_CONTENT_LENGTH", 20 * 1024 * 1024)  # 20 MB
     
     # Database configuration
-    database_url = os.environ.get("DATABASE_URL")
+    database_url = ENV.get("DATABASE_URL")
     if database_url:
         app.config["SQLALCHEMY_DATABASE_URI"] = database_url
     else:
@@ -83,21 +86,21 @@ def create_app() -> Flask:
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
     # Google Cloud Storage configuration
-    app.config["GCS_BUCKET_NAME"] = os.environ.get("GCS_BUCKET_NAME")
-    app.config["GCS_PROCESSED_BUCKET_NAME"] = os.environ.get("GCS_PROCESSED_BUCKET_NAME")
+    app.config["GCS_BUCKET_NAME"] = ENV.get("GCS_BUCKET_NAME")
+    app.config["GCS_PROCESSED_BUCKET_NAME"] = ENV.get("GCS_PROCESSED_BUCKET_NAME")
     
     # Google Cloud Tasks configuration
-    app.config["CLOUD_TASKS_QUEUE_ID"] = os.environ.get("CLOUD_TASKS_QUEUE_ID")
-    app.config["CLOUD_TASKS_LOCATION"] = os.environ.get("CLOUD_TASKS_LOCATION", "us-central1")
+    app.config["CLOUD_TASKS_QUEUE_ID"] = ENV.get("CLOUD_TASKS_QUEUE_ID")
+    app.config["CLOUD_TASKS_LOCATION"] = ENV.get("CLOUD_TASKS_LOCATION", "us-central1")
     
     # Document AI configuration
-    app.config["DOCAI_PROCESSOR_ID"] = os.environ.get("DOCAI_PROCESSOR_ID")
-    app.config["DOCAI_LOCATION"] = os.environ.get("DOCAI_LOCATION", "us")
+    app.config["DOCAI_PROCESSOR_ID"] = ENV.get("DOCAI_PROCESSOR_ID")
+    app.config["DOCAI_LOCATION"] = ENV.get("DOCAI_LOCATION", "us")
     
     # Sentry configuration
     import sentry_sdk
     from sentry_sdk.integrations.flask import FlaskIntegration
-    dsn = os.getenv("SENTRY_DSN")
+    dsn = ENV.get("SENTRY_DSN")
     if dsn:
         sentry_sdk.init(dsn=dsn, integrations=[FlaskIntegration()], traces_sample_rate=0.1)
 
@@ -110,11 +113,11 @@ def create_app() -> Flask:
     limiter = Limiter(
         key_func=get_remote_address,
         storage_uri=(
-            os.environ.get("FLASK_LIMITER_STORAGE_URI")
-            or os.environ.get("REDIS_URL")
-            or os.environ.get("CELERY_BROKER_URL")
+            ENV.get("FLASK_LIMITER_STORAGE_URI")
+            or ENV.get("REDIS_URL")
+            or ENV.get("CELERY_BROKER_URL")
         ),
-        default_limits=[os.environ.get("GLOBAL_RATE_LIMIT", "120 per minute")],
+        default_limits=[ENV.get("GLOBAL_RATE_LIMIT", "120 per minute")],
     )
     limiter.init_app(app)
 
@@ -129,7 +132,7 @@ def create_app() -> Flask:
     from flask import request, jsonify
     @limiter.request_filter
     def _allowlist():
-        ips = {ip.strip() for ip in os.environ.get("RATE_ALLOWLIST","").split(",") if ip.strip()}
+        ips = {ip.strip() for ip in ENV.get("RATE_ALLOWLIST","").split(",") if ip.strip()}
         return request.remote_addr in ips
 
     @app.errorhandler(429)
@@ -201,7 +204,7 @@ def create_app() -> Flask:
     app.register_blueprint(main_blueprint)
     
     # Register worker blueprint if running as worker service
-    if os.environ.get("WORKER_SERVICE", "false").lower() == "true":
+    if ENV.get("WORKER_SERVICE", "false").lower() == "true":
         from .worker_routes import worker_bp as worker_blueprint  # type: ignore
         app.register_blueprint(worker_blueprint)
         
