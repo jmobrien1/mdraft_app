@@ -1,0 +1,5 @@
+steps:
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['build','-f','Dockerfile.worker','-t','us-central1-docker.pkg.dev/mdraft/cloud-run-source-deploy/mdraft-worker:1754872707','.']
+images:
+- 'us-central1-docker.pkg.dev/mdraft/cloud-run-source-deploy/mdraft-worker:1754872707'
