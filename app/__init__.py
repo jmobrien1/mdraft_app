@@ -70,6 +70,7 @@ def create_app() -> Flask:
 
     # Application configuration
     app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "changeme")
+    app.config.setdefault("MAX_CONTENT_LENGTH", 20 * 1024 * 1024)  # 20 MB
     
     # Database configuration
     database_url = os.environ.get("DATABASE_URL")
@@ -152,6 +153,9 @@ def create_app() -> Flask:
 
     from .beta import bp as beta_bp
     app.register_blueprint(beta_bp)
+
+    from .ui import bp as ui_bp
+    app.register_blueprint(ui_bp)
     
     # Register worker blueprint if running as worker service
     if os.environ.get("WORKER_SERVICE", "false").lower() == "true":

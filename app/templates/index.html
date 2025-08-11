@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>mdraft — beta</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; max-width: 880px; margin: 40px auto; padding: 0 16px; }
+    header { margin-bottom: 24px; }
+    .card { border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
+    .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    button { padding: 10px 14px; border: 1px solid #111827; background: #111827; color: white; border-radius: 10px; cursor: pointer; }
+    button[disabled] { opacity: .6; cursor: not-allowed; }
+    textarea { width: 100%; min-height: 320px; padding: 12px; border-radius: 10px; border: 1px solid #e5e7eb; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .hint { color: #6b7280; font-size: 14px; }
+    footer { margin-top: 24px; color: #6b7280; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>mdraft — beta</h1>
+    <p class="hint">Upload a file and get Markdown back from the <code>/beta/convert</code> endpoint.</p>
+  </header>
+
+  <div class="card">
+    <form id="form" class="row">
+      <input id="file" type="file" name="file" required />
+      <button id="btn" type="submit">Convert</button>
+      <span id="status" class="hint"></span>
+    </form>
+  </div>
+
+  <div style="height: 12px"></div>
+
+  <div class="card">
+    <label class="hint">Result</label>
+    <textarea id="out" placeholder="Markdown will appear here..." readonly></textarea>
+  </div>
+
+  <footer>
+    Health check: <a href="/health">/health</a>
+  </footer>
+
+  <script>
+    const form = document.getElementById('form');
+    const file = document.getElementById('file');
+    const btn = document.getElementById('btn');
+    const out = document.getElementById('out');
+    const statusEl = document.getElementById('status');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (!file.files.length) return;
+      const fd = new FormData();
+      fd.append('file', file.files[0]);
+      btn.disabled = true;
+      statusEl.textContent = 'Converting...';
+
+      try {
+        const res = await fetch('/beta/convert', { method: 'POST', body: fd });
+        const data = await res.json();
+        out.value = (data.markdown ?? '') + (data.warning ? `\n\n[warning] ${data.warning}` : '');
+        statusEl.textContent = res.ok ? 'Done' : 'Error';
+      } catch (err) {
+        statusEl.textContent = 'Network error';
+        out.value = String(err);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
