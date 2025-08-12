@@ -219,6 +219,9 @@ def create_app() -> Flask:
     from .api_usage import bp as usage_api_bp
     app.register_blueprint(usage_api_bp)
 
+    from .api_estimate import bp as estimate_api_bp
+    app.register_blueprint(estimate_api_bp)
+
     from .view import bp as view_bp
     app.register_blueprint(view_bp)
 
