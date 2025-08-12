@@ -35,4 +35,4 @@ markitdown[all]==0.1.2
 pdfminer.six==20231228
 
 # Monitoring and observability
-sentry-sdk[flask]==2.9.0
+sentry-sdk[flask]==2.9.0pypdf~=4.2
