@@ -216,6 +216,9 @@ def create_app() -> Flask:
     from .api_queue import bp as queue_bp
     app.register_blueprint(queue_bp)
 
+    from .api_usage import bp as usage_api_bp
+    app.register_blueprint(usage_api_bp)
+
     from .view import bp as view_bp
     app.register_blueprint(view_bp)
 
