@@ -20,6 +20,7 @@
       <div class="row">
         <a class="link" href="/health" title="health">/health</a>
         <a class="link" href="https://mdraft-web.onrender.com/api/conversions?limit=5" target="_blank">API</a>
+        <span id="usage-badge" style="display:none; margin-left:8px; padding:2px 6px; border-radius:10px; background:#eef; color:#224; font-size:0.85rem;"></span>
       </div>
     </div>
 
@@ -30,5 +31,32 @@
   <script type="module" src="/static/app.js"></script>
   <div class="toast" aria-live="polite"></div>
   {% block scripts %}{% endblock %}
+  <script>
+(function () {
+  const el = document.getElementById('usage-badge');
+  if (!el) return;
+  const show = (txt, title) => { el.textContent = txt; if (title) el.title = title; el.style.display = 'inline-block'; };
+  const hide = () => { el.style.display = 'none'; };
+  async function loadUsage() {
+    try {
+      const res = await fetch('/api/me/usage', { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' });
+      const ct = (res.headers.get('content-type') || '').toLowerCase();
+      if (res.status === 401) { hide(); return; } // not logged in during F&F
+      if (!res.ok || !ct.includes('application/json')) { hide(); return; }
+      const data = await res.json();
+      if (!data || typeof data.used_pages !== 'number' || typeof data.cap_pages !== 'number') { hide(); return; }
+      const used = data.used_pages|0, cap = data.cap_pages|0, plan = (data.plan || '').trim() || 'F&F';
+      show(`Usage: ${used}/${cap}`, `Plan: ${plan} • ${used} of ${cap} pages this month`);
+    } catch (_) { hide(); }
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', loadUsage);
+  } else {
+    loadUsage();
+  }
+  // Expose for manual refresh after a conversion completes:
+  window.refreshUsageBadge = loadUsage;
+})();
+</script>
 </body>
 </html>
