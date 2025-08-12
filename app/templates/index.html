@@ -12,6 +12,7 @@
         <div>📄 Drag & drop file here or <button class="btn secondary" type="button" id="pick">Choose file</button></div>
         <div id="chosen" class="hint" style="margin-top:6px;"></div>
       </div>
+      <div id="estimate-line" style="margin-top:8px; font-size:0.9rem; color:#666;"></div>
       <div class="row" style="margin-top:12px;">
         <button id="btn" class="btn" type="submit">Convert</button>
         <span id="status" class="hint">Idle</span>
@@ -72,39 +73,6 @@
   drop.addEventListener('click', (e)=>{ if(e.target===drop) file.click(); });
   file.addEventListener('change', ()=> chosen.textContent = file.files[0] ? file.files[0].name : "");
 
-  async function loadRecent(){
-    try{
-      const res = await fetch('/api/conversions?limit=10');
-      const data = await res.json();
-      const el = document.getElementById('recent');
-      el.innerHTML = '';
-      (data.items||[]).forEach(item=>{
-        const row = document.createElement('div'); row.className='item';
-        const left = document.createElement('div');
-        left.innerHTML = `<a class="link" href="${item.links.view||('/v/'+item.id)}" target="_blank">${item.filename}</a>
-          <span class="badge">${item.status}</span>
-          <span class="hint">${fmtDate(item.created_at)}</span>`;
-        const right = document.createElement('div');
-        const a1 = document.createElement('a'); a1.className='link'; a1.href=item.links.markdown; a1.textContent='Markdown'; a1.target='_blank';
-        const a2 = document.createElement('a'); a2.className='link'; a2.href=item.links.view||('/v/'+item.id); a2.textContent='View'; a2.style.marginLeft='12px'; a2.target='_blank';
-        const cp = document.createElement('button'); cp.className='btn secondary'; cp.style.marginLeft='12px'; cp.textContent='Copy link';
-        cp.onclick=()=> copy(location.origin+(item.links.view||('/v/'+item.id)));
-        const loadBtn = document.createElement('button');
-        loadBtn.className = 'btn secondary';
-        loadBtn.style.marginLeft = '12px';
-        loadBtn.textContent = 'Load here';
-        loadBtn.onclick = async ()=>{
-          statusEl.textContent = 'Loading…';
-          const m = await fetch(item.links.markdown);
-          out.value = await m.text();
-          statusEl.textContent = 'Loaded';
-        };
-        right.append(a1,a2,cp,loadBtn);
-        row.append(left,right); el.append(row);
-      });
-    }catch(e){ console.error(e); }
-  }
-
   form.addEventListener('submit', async (e)=>{
     e.preventDefault();
     if (!file.files.length) return;
@@ -127,7 +95,7 @@
             statusEl.textContent = "Completed";
             const mres = await fetch(j.links.markdown);
             out.value = await mres.text();   // <-- always load markdown text
-            toast("Done"); await loadRecent();
+            toast("Done"); await (window.loadRecent && window.loadRecent());
           } else if (j.status === "FAILED"){
             statusEl.textContent = "Failed";
             out.value = j.error || "conversion failed";
@@ -146,7 +114,7 @@
         } else {
           out.value = ""; // nothing? keep empty
         }
-        toast("Done"); await loadRecent();
+        toast("Done"); await (window.loadRecent && window.loadRecent());
       } else {
         statusEl.textContent = 'Error';
         out.value = JSON.stringify(data);
@@ -165,7 +133,102 @@
     const url = URL.createObjectURL(blob);
     const a=document.createElement('a'); a.href=url; a.download='mdraft.md'; a.click(); URL.revokeObjectURL(url);
   };
+</script>
 
-  loadRecent();
+<script>
+// Load recent conversions (global so other scripts/HTML can call it)
+window.loadRecent = async function loadRecent() {
+  try {
+    const res = await fetch('/api/conversions?limit=10', { headers: { 'Accept': 'application/json' }});
+    const ct = (res.headers.get('content-type') || '').toLowerCase();
+    if (!res.ok || !ct.includes('application/json')) {
+      const _txt = await res.text();
+      console.warn('recent conversions not JSON', res.status, ct);
+      return;
+    }
+    const data = await res.json();
+    // ⬇️ keep the existing DOM rendering for the recent list here, unchanged
+    const el = document.getElementById('recent');
+    el.innerHTML = '';
+    (data.items||[]).forEach(item=>{
+      const row = document.createElement('div'); row.className='item';
+      const left = document.createElement('div');
+      left.innerHTML = `<a class="link" href="${item.links.view||('/v/'+item.id)}" target="_blank">${item.filename}</a>
+        <span class="badge">${item.status}</span>
+        <span class="hint">${fmtDate(item.created_at)}</span>`;
+      const right = document.createElement('div');
+      const a1 = document.createElement('a'); a1.className='link'; a1.href=item.links.markdown; a1.textContent='Markdown'; a1.target='_blank';
+      const a2 = document.createElement('a'); a2.className='link'; a2.href=item.links.view||('/v/'+item.id); a2.textContent='View'; a2.style.marginLeft='12px'; a2.target='_blank';
+      const cp = document.createElement('button'); cp.className='btn secondary'; cp.style.marginLeft='12px'; cp.textContent='Copy link';
+      cp.onclick=()=> copy(location.origin+(item.links.view||('/v/'+item.id)));
+      const loadBtn = document.createElement('button');
+      loadBtn.className = 'btn secondary';
+      loadBtn.style.marginLeft = '12px';
+      loadBtn.textContent = 'Load here';
+      loadBtn.onclick = async ()=>{
+        statusEl.textContent = 'Loading…';
+        const m = await fetch(item.links.markdown);
+        out.value = await m.text();
+        statusEl.textContent = 'Loaded';
+      };
+      right.append(a1,a2,cp,loadBtn);
+      row.append(left,right); el.append(row);
+    });
+  } catch (e) {
+    console.warn('recent conversions fetch failed', e);
+  }
+};
+// Auto-run on DOM ready, but keep function callable globally too
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => window.loadRecent());
+} else {
+  window.loadRecent();
+}
+
+window.loadRecent && window.loadRecent();
+;(function () {
+  const chooseBtn = document.getElementById('choose') || document.querySelector('[data-choose]');
+  const fileInput = document.getElementById('file');
+  if (chooseBtn && fileInput) {
+    chooseBtn.addEventListener('click', (e) => { e.preventDefault(); fileInput.click(); });
+  }
+})();
+</script>
+
+<script>
+(function () {
+  const input = document.getElementById('file');
+  const line  = document.getElementById('estimate-line');
+  if (!input || !line) return;
+  input.addEventListener('change', async () => {
+    if (!input.files || !input.files[0]) { line.textContent = ''; return; }
+    const file = input.files[0];
+    line.textContent = 'Estimating…';
+    try {
+      const fd = new FormData();
+      fd.append('file', file, file.name);
+      const res = await fetch('/api/estimate', {
+        method: 'POST',
+        body: fd,
+        headers: { 'Accept': 'application/json' },
+        credentials: 'same-origin',
+      });
+      // Handle non-OK or non-JSON responses safely
+      const ct = (res.headers.get('content-type') || '').toLowerCase();
+      if (!res.ok || !ct.includes('application/json')) {
+        const text = await res.text();
+        console.warn('Estimate non-JSON or error', res.status, ct, text.slice(0,200));
+        line.textContent = (res.status === 413) ? 'File too large for estimate.' : 'Estimate unavailable.';
+        return;
+      }
+      const data = await res.json();
+      if (!data || typeof data.pages !== 'number') { line.textContent = 'Estimate unavailable.'; return; }
+      line.textContent = `Estimate: ~${data.pages} premium pages → ~$${data.est_cost_usd} (not billed until run).`;
+    } catch (err) {
+      console.error('Estimate fetch failed', err);
+      line.textContent = 'Estimate unavailable.';
+    }
+  });
+})();
 </script>
 {% endblock %}
