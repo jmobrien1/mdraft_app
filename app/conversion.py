@@ -353,7 +353,7 @@ def process_job(job_id: int, gcs_uri: str) -> str:
         Markdown content as string.
     """
     import time
-    from .storage import parse_gcs_uri, download_from_gcs
+    from .services import Storage
     
     logger = current_app.logger
     start_time = time.time()
@@ -368,17 +368,30 @@ def process_job(job_id: int, gcs_uri: str) -> str:
         # Return existing content if available, otherwise empty string
         return ""
     
-    # Validate GCS URI
-    if not gcs_uri or not gcs_uri.startswith("gs://"):
-        logger.error(f"Invalid GCS URI provided for job {job_id}: {gcs_uri}")
-        raise ValueError("Invalid GCS URI provided")
+    # Validate storage path
+    if not gcs_uri:
+        logger.error(f"No storage path provided for job {job_id}")
+        raise ValueError("No storage path provided")
     
-    # Parse GCS URI and download to temp
+    # Download file from storage to temp
     try:
-        bucket, blob = parse_gcs_uri(gcs_uri)
-        temp_filename = f"job_{job_id}_{job.filename}"
-        input_path = download_from_gcs(bucket, blob, temp_filename)
-        logger.info(f"Downloaded {gcs_uri} to {input_path}")
+        storage = Storage()
+        
+        # Check if file exists in storage
+        if not storage.exists(gcs_uri):
+            logger.error(f"File not found in storage for job {job_id}: {gcs_uri}")
+            raise FileNotFoundError(f"File not found in storage: {gcs_uri}")
+        
+        # Read file data from storage
+        file_data = storage.read_bytes(gcs_uri)
+        
+        # Write to temporary file for processing
+        import tempfile
+        temp_fd, input_path = tempfile.mkstemp(suffix=f"_{job.filename}")
+        with os.fdopen(temp_fd, 'wb') as f:
+            f.write(file_data)
+        
+        logger.info(f"Downloaded {gcs_uri} to temporary file {input_path}")
     except Exception as e:
         logger.error(f"Failed to download file for job {job_id}: {e}")
         raise

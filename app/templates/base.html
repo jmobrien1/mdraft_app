@@ -20,6 +20,9 @@
       <div class="row">
         <a class="link" href="/health" title="health">/health</a>
         <a class="link" href="https://mdraft-web.onrender.com/api/conversions?limit=5" target="_blank">API</a>
+        {% if config.BILLING_ENABLED %}
+        <a class="link upgrade-btn" href="#" onclick="showUpgradeModal()" title="Upgrade to Pro">Upgrade</a>
+        {% endif %}
         <span id="usage-badge" style="display:none; margin-left:8px; padding:2px 6px; border-radius:10px; background:#eef; color:#224; font-size:0.85rem;"></span>
       </div>
     </div>
@@ -30,6 +33,19 @@
   </div>
   <script type="module" src="/static/app.js"></script>
   <div class="toast" aria-live="polite"></div>
+  
+  {% if config.BILLING_ENABLED %}
+  <!-- Upgrade Modal -->
+  <div id="upgrade-modal" class="modal" style="display: none;">
+    <div class="modal-content">
+      <span class="close">&times;</span>
+      <h2>Upgrade to Pro</h2>
+      <p>Get unlimited conversions and priority processing.</p>
+      <button onclick="initiateCheckout()" class="upgrade-button">Upgrade Now</button>
+    </div>
+  </div>
+  {% endif %}
+  
   {% block scripts %}{% endblock %}
   <script>
 (function () {
@@ -57,6 +73,61 @@
   // Expose for manual refresh after a conversion completes:
   window.refreshUsageBadge = loadUsage;
 })();
+
+{% if config.BILLING_ENABLED %}
+// Upgrade modal functionality
+function showUpgradeModal() {
+  document.getElementById('upgrade-modal').style.display = 'block';
+}
+
+function hideUpgradeModal() {
+  document.getElementById('upgrade-modal').style.display = 'none';
+}
+
+async function initiateCheckout() {
+  try {
+    // TODO: Get current user ID from session
+    const userId = 1; // Placeholder - should get from auth
+    
+    const response = await fetch('/billing/checkout', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ user_id: userId })
+    });
+    
+    const data = await response.json();
+    
+    if (response.ok && data.checkout_url) {
+      window.location.href = data.checkout_url;
+    } else {
+      alert(data.message || 'Failed to create checkout session');
+    }
+  } catch (error) {
+    console.error('Checkout error:', error);
+    alert('Failed to initiate checkout');
+  }
+}
+
+// Close modal when clicking outside or on X
+document.addEventListener('DOMContentLoaded', function() {
+  const modal = document.getElementById('upgrade-modal');
+  const closeBtn = document.querySelector('.close');
+  
+  if (closeBtn) {
+    closeBtn.onclick = hideUpgradeModal;
+  }
+  
+  if (modal) {
+    window.onclick = function(event) {
+      if (event.target === modal) {
+        hideUpgradeModal();
+      }
+    }
+  }
+});
+{% endif %}
 </script>
 </body>
 </html>

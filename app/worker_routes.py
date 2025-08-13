@@ -21,6 +21,7 @@ from . import db
 from .models import Job
 from .conversion import process_job
 from .storage import download_from_gcs, upload_stream_to_gcs, upload_text_to_gcs
+from .services import Storage
 from utils.db import advisory_lock, get_job_with_lock
 
 logger = logging.getLogger(__name__)
@@ -248,24 +249,20 @@ def process_document_task() -> Any:
             
             logger.info(f"Starting processing for job {job_id}")
             
-            # Process the job with GCS integration
+            # Process the job with Storage adapter
             try:
                 markdown_content = process_job(job_id, gcs_uri)
                 
-                # Upload result to processed bucket
-                processed_bucket = current_app.config.get("GCS_PROCESSED_BUCKET_NAME")
-                if not processed_bucket:
-                    logger.error("GCS_PROCESSED_BUCKET_NAME not configured")
-                    raise ValueError("GCS_PROCESSED_BUCKET_NAME not configured")
-                
-                output_blob_name = f"processed/{job_id}.md"
-                output_uri = upload_text_to_gcs(processed_bucket, output_blob_name, markdown_content)
-                logger.info(f"Uploaded result to GCS: {output_uri}")
+                # Use Storage adapter for output
+                storage = Storage()
+                output_path = f"outputs/{job_id}/result.md"
+                storage.write_bytes(output_path, markdown_content.encode('utf-8'))
+                logger.info(f"Uploaded result to storage: {output_path}")
                 
                 # Update job with success information
                 job = db.session.get(Job, job_id)
                 if job:
-                    job.output_uri = output_uri
+                    job.output_uri = output_path
                     job.completed_at = datetime.utcnow()
                     job.error_message = None
                     job.status = "completed"
@@ -274,12 +271,12 @@ def process_document_task() -> Any:
                 processing_duration = time.time() - start_time
                 bytes_out = len(markdown_content.encode('utf-8'))
                 logger.info(f"Successfully completed job {job_id} in {processing_duration:.2f}s")
-                logger.info(f"Job {job_id} metrics: output_uri={output_uri}, bytes_out={bytes_out}")
+                logger.info(f"Job {job_id} metrics: output_path={output_path}, bytes_out={bytes_out}")
                 
                 return jsonify({
                     "status": "completed",
                     "job_id": job_id,
-                    "output_uri": output_uri,
+                    "output_uri": output_path,
                     "bytes_out": bytes_out,
                     "processing_duration": processing_duration
                 }), 200

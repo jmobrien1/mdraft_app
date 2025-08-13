@@ -3,6 +3,7 @@ from datetime import datetime
 from flask import current_app
 from app import create_app, db
 from .models_conversion import Conversion
+from .cleanup import run_cleanup
 
 from google.cloud import storage
 
@@ -51,6 +52,33 @@ def register_cli(app):
         delete_gcs = os.getenv("CLEANUP_DELETE_GCS", "1").lower() in ("1","true","yes")
         n = cleanup_impl(days, delete_gcs)
         print(f"[cleanup] deleted {n} rows older than {days} days")
+
+    @app.cli.command("cleanup-run-once")
+    def cleanup_run_once():
+        """Run cleanup process once manually."""
+        print("Starting manual cleanup...")
+        result = run_cleanup()
+        
+        # Print results
+        print(f"Cleanup completed at {result['timestamp']}")
+        
+        file_cleanup = result['file_cleanup']
+        print(f"File cleanup: {file_cleanup['status']}")
+        if file_cleanup['status'] == 'completed':
+            print(f"  Files deleted: {file_cleanup['files_deleted']}")
+            if file_cleanup['errors']:
+                print(f"  Errors: {len(file_cleanup['errors'])}")
+        elif file_cleanup['status'] == 'skipped':
+            print(f"  Reason: {file_cleanup['reason']}")
+        
+        job_cleanup = result['job_cleanup']
+        print(f"Job cleanup: {job_cleanup['status']}")
+        if job_cleanup['status'] == 'completed':
+            print(f"  Jobs deleted: {job_cleanup['jobs_deleted']}")
+        
+        if file_cleanup['status'] == 'failed' or job_cleanup['status'] == 'failed':
+            return 1  # Exit with error code
+        return 0
 
     @app.cli.command("backfill-sha")
     def backfill_sha():

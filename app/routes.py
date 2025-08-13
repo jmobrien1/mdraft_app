@@ -17,9 +17,11 @@ from sqlalchemy import text
 
 from . import db, limiter
 from .models import Job
-from .tasks import add_conversion_task
+
 from .utils import is_file_allowed, generate_job_id
 from .storage import upload_stream_to_gcs, generate_download_url, generate_signed_url, generate_v4_signed_url
+from .services import Storage
+from .celery_tasks import enqueue_conversion_task
 
 
 bp = Blueprint("main", __name__)
@@ -49,7 +51,7 @@ def health_check() -> Any:
 
 
 @bp.route("/upload", methods=["POST"])
-@limiter.limit("20 per minute")
+@limiter.limit(os.getenv("CONVERT_RATE_LIMIT_DEFAULT", "20 per minute"))
 def upload() -> Any:
     """Handle document upload and enqueue a conversion job.
 
@@ -75,25 +77,22 @@ def upload() -> Any:
     job_id_str = generate_job_id()
     filename = f"{job_id_str}_{file.filename}"
     
-    # Stream upload to GCS
-    gcs_uri = None
-    bucket_name = current_app.config.get("GCS_BUCKET_NAME")
-    if bucket_name:
-        # Reset stream position after validation
-        file.stream.seek(0)
-        gcs_uri = upload_stream_to_gcs(file.stream, bucket_name, filename)
+    # Use Storage adapter for upload
+    storage = Storage()
+    upload_path = f"uploads/{job_id_str}/{file.filename}"
     
-    # Fallback to local storage if GCS upload failed or not configured
-    if not gcs_uri:
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        uploads_dir = os.path.join(project_root, "uploads")
-        os.makedirs(uploads_dir, exist_ok=True)
-        file_path = os.path.join(uploads_dir, filename)
-        
+    try:
         # Reset stream position after validation
         file.stream.seek(0)
-        file.save(file_path)
-        gcs_uri = file_path
+        file_data = file.read()
+        storage.write_bytes(upload_path, file_data)
+        
+        # Store the path for job tracking
+        gcs_uri = upload_path
+        
+    except Exception as e:
+        current_app.logger.error(f"Failed to upload file {filename}: {e}")
+        return jsonify({"error": "Upload failed"}), 500
     
     # Create job record in the database with status='queued'
     # For this MVP we don't have authentication, so user_id is 1
@@ -112,9 +111,9 @@ def upload() -> Any:
     
     # Enqueue background task for conversion
     try:
-        task_name = add_conversion_task(job.id, job.user_id, gcs_uri)
-        if task_name:
-            current_app.logger.info(f"Enqueued conversion task {task_name} for job {job.id}")
+        task_id = enqueue_conversion_task(job.id, job.user_id, gcs_uri)
+        if task_id:
+            current_app.logger.info(f"Enqueued conversion task {task_id} for job {job.id}")
         else:
             current_app.logger.warning(f"Failed to enqueue conversion task for job {job.id}")
     except Exception as e:
@@ -153,43 +152,55 @@ def job_status(job_id: int) -> Any:
     
     # Add output signed URL if job is completed and has output
     if job.status == "completed" and job.output_uri:
-        if job.output_uri.startswith("gs://"):
-            # Parse GCS URI and generate V4 signed URL with download headers
-            bucket_name = job.output_uri.split("/")[2]
-            blob_name = "/".join(job.output_uri.split("/")[3:])
+        try:
+            storage = Storage()
             
-            # Generate safe filename for download: job_<id>.md
-            safe_filename = f"job_{job.id}.md"
-            response_content_disposition = f"attachment; filename={safe_filename}"
-            
-            output_signed_url = generate_v4_signed_url(
-                bucket_name, 
-                blob_name, 
-                "GET", 
-                15,  # 15 minutes default
-                response_content_disposition=response_content_disposition,
-                response_content_type="text/markdown"
-            )
-            if output_signed_url:
-                response["output_signed_url"] = output_signed_url
-        else:
-            # Local file, generate local download URL
-            output_signed_url = generate_signed_url(job.output_uri)
-            if output_signed_url:
-                response["output_signed_url"] = output_signed_url
+            # Check if the file exists in storage
+            if storage.exists(job.output_uri):
+                # Generate safe filename for download: job_<id>.md
+                safe_filename = f"job_{job.id}.md"
+                
+                # For now, return a simple download URL
+                # In production, you might want to generate signed URLs for GCS
+                response["output_signed_url"] = f"/download/{job.output_uri}"
+                response["output_filename"] = safe_filename
+            else:
+                current_app.logger.warning(f"Output file not found in storage: {job.output_uri}")
+        except Exception as e:
+            current_app.logger.error(f"Error checking output file: {e}")
     
     return jsonify(response)
 
 
-@bp.route("/download/<path:filename>", methods=["GET"])
-def download_file(filename: str) -> Any:
-    """Serve a processed file from the processed directory.
+@bp.route("/download/<path:storage_path>", methods=["GET"])
+def download_file(storage_path: str) -> Any:
+    """Serve a file from storage.
 
-    This endpoint is provided for development convenience.  In
-    production, files should be served directly from GCS using
-    temporary signed URLs.  An expiry query parameter is accepted but
-    ignored in this stub.
+    This endpoint serves files from the Storage adapter (GCS or local).
+    It's provided for development convenience. In production, files should
+    be served directly from GCS using temporary signed URLs.
     """
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    processed_dir = os.path.join(project_root, "processed")
-    return send_from_directory(processed_dir, filename, as_attachment=True)
+    try:
+        storage = Storage()
+        
+        # Check if file exists
+        if not storage.exists(storage_path):
+            return jsonify({"error": "File not found"}), 404
+        
+        # Read file data
+        file_data = storage.read_bytes(storage_path)
+        
+        # Determine filename for download
+        filename = storage_path.split('/')[-1]
+        if not filename:
+            filename = "download"
+        
+        # Return file as attachment
+        from flask import Response
+        response = Response(file_data, mimetype='application/octet-stream')
+        response.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response
+        
+    except Exception as e:
+        current_app.logger.error(f"Error serving file {storage_path}: {e}")
+        return jsonify({"error": "Internal server error"}), 500

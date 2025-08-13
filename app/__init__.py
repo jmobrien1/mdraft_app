@@ -38,11 +38,7 @@ login_manager: LoginManager = LoginManager()
 # GLOBAL limiter (exported as app.limiter so routes can import it)
 limiter = Limiter(
     key_func=get_remote_address,
-    storage_uri=(
-        ENV.get("FLASK_LIMITER_STORAGE_URI")
-        or ENV.get("REDIS_URL")
-        or ENV.get("CELERY_BROKER_URL")
-    ),
+    storage_uri=ENV.get("FLASK_LIMITER_STORAGE_URI"),
     default_limits=[ENV.get("GLOBAL_RATE_LIMIT", "120 per minute")],
 )
 
@@ -64,12 +60,14 @@ class JSONFormatter(logging.Formatter):
         }
         # When handling a request, include the correlation ID if available.
         if has_request_context():
-            corr_id = request.environ.get("HTTP_X_REQUEST_ID", "N/A")
+            request_id = request.environ.get("HTTP_X_REQUEST_ID") or request.environ.get("X-Request-ID")
+            corr_id = request_id or "N/A"
             # Add request-specific context
-            log_data["request_id"] = corr_id
+            log_data["request_id"] = request_id or "N/A"
             log_data["task_name"] = request.headers.get("X-Cloud-Tasks-TaskName", "N/A")
             log_data["queue_name"] = request.headers.get("X-Cloud-Tasks-QueueName", "N/A")
-            log_data["job_id"] = request.headers.get("X-Job-ID", "N/A")
+            log_data["job_id"] = request.environ.get("X-Job-ID", "N/A")
+            log_data["conversion_id"] = request.environ.get("X-Conversion-ID", "N/A")
         else:
             corr_id = "N/A"
         log_data["correlation_id"] = corr_id
@@ -104,6 +102,20 @@ def create_app() -> Flask:
     # Google Cloud Tasks configuration
     app.config["CLOUD_TASKS_QUEUE_ID"] = ENV.get("CLOUD_TASKS_QUEUE_ID")
     app.config["CLOUD_TASKS_LOCATION"] = ENV.get("CLOUD_TASKS_LOCATION", "us-central1")
+    
+    # Celery configuration
+    app.config["CELERY_BROKER_URL"] = ENV.get("CELERY_BROKER_URL")
+    app.config["CELERY_RESULT_BACKEND"] = ENV.get("CELERY_RESULT_BACKEND")
+    app.config["QUEUE_MODE"] = ENV.get("QUEUE_MODE", "celery")
+    
+    # Rate limiting configuration
+    app.config["CONVERT_RATE_LIMIT_DEFAULT"] = ENV.get("CONVERT_RATE_LIMIT_DEFAULT", "20 per minute")
+    
+    # Billing configuration
+    app.config["BILLING_ENABLED"] = ENV.get("BILLING_ENABLED", "0") == "1"
+    app.config["STRIPE_SECRET_KEY"] = ENV.get("STRIPE_SECRET_KEY")
+    app.config["STRIPE_PRICE_PRO"] = ENV.get("STRIPE_PRICE_PRO")
+    app.config["STRIPE_WEBHOOK_SECRET"] = ENV.get("STRIPE_WEBHOOK_SECRET")
     
     # Document AI configuration
     app.config["DOCAI_PROCESSOR_ID"] = ENV.get("DOCAI_PROCESSOR_ID")
@@ -149,6 +161,15 @@ def create_app() -> Flask:
     def _allowlist():
         ips = {ip.strip() for ip in ENV.get("RATE_ALLOWLIST","").split(",") if ip.strip()}
         return request.remote_addr in ips
+
+    # Add request ID middleware
+    @app.before_request
+    def _set_request_id():
+        """Set request ID for logging and tracing."""
+        import uuid
+        request_id = request.headers.get('X-Request-ID') or str(uuid.uuid4())
+        request.environ['X-Request-ID'] = request_id
+        request.environ['HTTP_X_REQUEST_ID'] = request_id
 
     # Add basic security headers
     @app.after_request
@@ -230,6 +251,9 @@ def create_app() -> Flask:
     
     from .admin import bp as admin_bp
     app.register_blueprint(admin_bp)
+    
+    from .billing import bp as billing_bp
+    app.register_blueprint(billing_bp)
     
     from .cli import register_cli
     register_cli(app)
