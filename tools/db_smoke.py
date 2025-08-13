@@ -4,8 +4,16 @@ Database smoke test - connects to database and runs a simple query.
 Reads DATABASE_URL from environment or SQLALCHEMY_DATABASE_URI from Flask config.
 """
 
-import os
-import sys
+import os, sys
+try:
+    from app.utils.db_url import normalize_db_url  # absolute when repo root is on PYTHONPATH
+except ModuleNotFoundError:
+    # Add project root to sys.path when invoked directly
+    root = os.path.dirname(os.path.dirname(__file__))
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    from app.utils.db_url import normalize_db_url
+
 from datetime import datetime
 
 def main():

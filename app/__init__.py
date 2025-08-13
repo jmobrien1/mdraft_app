@@ -88,7 +88,7 @@ def create_app() -> Flask:
     app.config.setdefault("MAX_CONTENT_LENGTH", 25 * 1024 * 1024)  # 25 MB hard cap
     
     # Database configuration
-    from app.utils.db_url import normalize_db_url
+    from .utils.db_url import normalize_db_url
     db_url = normalize_db_url(ENV.get("DATABASE_URL", ""))
     app.config["SQLALCHEMY_DATABASE_URI"] = db_url
     app.logger.info("DB driver normalized to psycopg v3")
