@@ -90,7 +90,11 @@ def create_app() -> Flask:
     # Database configuration
     database_url = ENV.get("DATABASE_URL")
     if database_url:
+        # Ensure PostgreSQL URLs use psycopg driver
+        if database_url.startswith("postgresql://") and "+psycopg" not in database_url and "+psycopg2" not in database_url:
+            database_url = database_url.replace("postgresql://", "postgresql+psycopg://", 1)
         app.config["SQLALCHEMY_DATABASE_URI"] = database_url
+        app.logger.info("DB driver: psycopg v3")
     else:
         app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///mdraft_local.db"
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
