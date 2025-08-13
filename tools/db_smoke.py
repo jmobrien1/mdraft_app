@@ -17,11 +17,13 @@ def main():
         sys.exit(1)
     
     try:
-        # Import SQLAlchemy components
+        # Import SQLAlchemy components and normalize URL
         from sqlalchemy import create_engine, text
+        from app.utils.db_url import normalize_db_url
         
-        # Create engine and test connection
-        engine = create_engine(database_url)
+        # Normalize URL and create engine
+        normalized_url = normalize_db_url(database_url)
+        engine = create_engine(normalized_url)
         
         with engine.connect() as conn:
             result = conn.execute(text("SELECT now()"))

@@ -28,11 +28,9 @@ def create_worker_app() -> Flask:
     app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "worker-secret-key")
     
     # Database configuration
-    database_url = os.environ.get("DATABASE_URL")
-    if database_url:
-        app.config["SQLALCHEMY_DATABASE_URI"] = database_url
-    else:
-        app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///mdraft_worker.db"
+    from app.utils.db_url import normalize_db_url
+    db_url = normalize_db_url(os.environ.get("DATABASE_URL", ""))
+    app.config["SQLALCHEMY_DATABASE_URI"] = db_url
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
     # Google Cloud Storage configuration
