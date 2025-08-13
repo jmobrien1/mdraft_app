@@ -1,29 +1,28 @@
 #!/usr/bin/env python3
 """
-Database smoke test.
-
-Reads SQLALCHEMY_DATABASE_URI or DATABASE_URL, creates an engine,
-runs SELECT now(), prints the timestamp or a clear error, and exits 0.
+Database smoke test - connects to database and runs a simple query.
+Reads DATABASE_URL from environment or SQLALCHEMY_DATABASE_URI from Flask config.
 """
+
 import os
 import sys
-from sqlalchemy import create_engine, text
-
+from datetime import datetime
 
 def main():
-    """Run database smoke test."""
-    # Get database URI from environment
-    db_uri = os.getenv("SQLALCHEMY_DATABASE_URI") or os.getenv("DATABASE_URL")
+    # Get database URL from environment or Flask config
+    database_url = os.environ.get("DATABASE_URL")
     
-    if not db_uri:
-        print("ERROR: No database URI found in SQLALCHEMY_DATABASE_URI or DATABASE_URL")
-        sys.exit(0)
+    if not database_url:
+        print("ERROR: DATABASE_URL environment variable not set")
+        sys.exit(1)
     
     try:
-        # Create engine
-        engine = create_engine(db_uri)
+        # Import SQLAlchemy components
+        from sqlalchemy import create_engine, text
         
-        # Test connection with SELECT now()
+        # Create engine and test connection
+        engine = create_engine(database_url)
+        
         with engine.connect() as conn:
             result = conn.execute(text("SELECT now()"))
             timestamp = result.scalar()
@@ -31,9 +30,9 @@ def main():
             
     except Exception as e:
         print(f"ERROR: Database connection failed: {e}")
+        sys.exit(1)
     
     sys.exit(0)
-
 
 if __name__ == "__main__":
     main()
