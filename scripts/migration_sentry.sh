@@ -13,7 +13,7 @@ masked_host="$(echo "${DATABASE_URL#*://}" | cut -d@ -f2 | cut -d/ -f1)"
 masked_db="$(echo "${DATABASE_URL##*/}" | cut -d? -f1)"
 echo "DB (redacted): postgresql://******@${masked_host}/${masked_db}"
 
-# --- Precheck: DB connectivity & alembic_version visibility (psycopg v3 normalization) ---
+# --- Precheck (psycopg v3 normalization) ---
 python - <<'PY'
 import os
 from sqlalchemy import create_engine, text
@@ -46,14 +46,14 @@ rc=$?
 set -e
 if [[ $rc -ne 0 ]]; then
   echo "=== MIGRATION SENTRY: upgrade failed; attempting auto-repair (unknown revision / chain break) ==="
-  # Many failures here are from DB pointing to a revision not present in the repo.
-  # Step 1: detach alembic_version from the unknown rev and set to base
+
+  # Use Flask-Migrate stamping (inside app context), NOT raw 'alembic'
   set +e
-  alembic stamp base
+  flask db stamp base
   rc_stamp=$?
   set -e
   if [[ $rc_stamp -ne 0 ]]; then
-    echo "[SENTRY] WARN: 'alembic stamp base' failed; proceeding anyway."
+    echo "[SENTRY] WARN: 'flask db stamp base' failed; proceeding anyway."
   fi
 
   echo "=== MIGRATION SENTRY: retry flask db upgrade ==="
@@ -65,7 +65,7 @@ if [[ $rc -ne 0 ]]; then
   if [[ $rc2 -ne 0 ]]; then
     echo "=== MIGRATION SENTRY: upgrade still failing; applying guarded DDL minimums, then stamping head ==="
 
-    # --- Guarded DDL: ensure required minimal columns/indexes exist ---
+    # --- Guarded DDL (fix proposals + conversions) ---
     python - <<'PY'
 import os
 from sqlalchemy import create_engine, text
@@ -92,10 +92,10 @@ stmts = [
       END IF;
     END $$;
     """,
-    # CONVERSIONS
-    "ALTER TABLE IF NOT EXISTS public.conversions ADD COLUMN IF NOT EXISTS proposal_id INTEGER;",
-    "ALTER TABLE IF NOT EXISTS public.conversions ADD COLUMN IF NOT EXISTS user_id INTEGER;",
-    "ALTER TABLE IF NOT EXISTS public.conversions ADD COLUMN IF NOT EXISTS visitor_session_id VARCHAR(64);",
+    # CONVERSIONS  (FIXED: 'ALTER TABLE IF EXISTS', not 'IF NOT EXISTS')
+    "ALTER TABLE IF EXISTS public.conversions ADD COLUMN IF NOT EXISTS proposal_id INTEGER;",
+    "ALTER TABLE IF EXISTS public.conversions ADD COLUMN IF NOT EXISTS user_id INTEGER;",
+    "ALTER TABLE IF EXISTS public.conversions ADD COLUMN IF NOT EXISTS visitor_session_id VARCHAR(64);",
     "CREATE INDEX IF NOT EXISTS ix_conversions_proposal_id ON public.conversions (proposal_id);",
     "CREATE INDEX IF NOT EXISTS ix_conversions_user_id ON public.conversions (user_id);",
     "CREATE INDEX IF NOT EXISTS ix_conversions_visitor_session_id ON public.conversions (visitor_session_id);",
@@ -109,13 +109,13 @@ with engine.begin() as c:
 print("[SENTRY] Guarded DDL applied.")
 PY
 
-    # Step 2: Stamp to repo head so future upgrades run clean
+    # Stamp to repository head using Flask-Migrate (inside app context)
     set +e
-    alembic stamp head
+    flask db stamp head
     rc_stamp_head=$?
     set -e
     if [[ $rc_stamp_head -ne 0 ]]; then
-      echo "[SENTRY] WARN: 'alembic stamp head' failed; will verify schema anyway."
+      echo "[SENTRY] WARN: 'flask db stamp head' failed; will verify schema anyway."
     fi
   fi
 fi
