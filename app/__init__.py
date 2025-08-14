@@ -27,6 +27,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_bcrypt import Bcrypt
 from flask_login import LoginManager
+from sqlalchemy import text
 
 # Initialise extensions without an application context.  They will be
 # bound to the app inside create_app().
@@ -278,6 +279,9 @@ def create_app() -> Flask:
     from .api.agents import bp as agents_bp
     app.register_blueprint(agents_bp)
     
+    from .api.ops import ops as ops_bp
+    app.register_blueprint(ops_bp)
+    
     from .cli import register_cli
     register_cli(app)
     
@@ -290,6 +294,20 @@ def create_app() -> Flask:
         from .tasks import create_queue_if_not_exists
         with app.app_context():
             create_queue_if_not_exists()
+
+    # Add fail-fast schema check in non-test environments
+    if not app.config.get("TESTING", False):
+        try:
+            with app.app_context():
+                res = db.session.execute(text("""
+                    SELECT COUNT(*) FROM information_schema.columns
+                    WHERE table_name='proposals' AND column_name='visitor_session_id'
+                """)).scalar()
+                if res != 1:
+                    app.logger.error("DB not migrated: proposals.visitor_session_id missing")
+                    app.logger.error("Migration doctor should have run at startup")
+        except Exception as e:
+            app.logger.error(f"DB probe error: {e}")
 
     # Add global error handler for comprehensive logging
     from flask import request, jsonify, render_template
