@@ -11,6 +11,10 @@ from .security import sniff_category, size_ok
 from .auth_api import require_api_key_if_configured, rate_limit_for_convert, rate_limit_key_func
 from .quality import sha256_file, clean_markdown, pdf_text_fallback
 from .webhooks import deliver_webhook
+from .utils import is_file_allowed
+
+# Public mode toggle
+PUBLIC = (os.getenv("MDRAFT_PUBLIC_MODE") or "").strip().lower() in {"1","true","yes","on","y"}
 
 bp = Blueprint("api_convert", __name__, url_prefix="/api")
 
@@ -46,15 +50,28 @@ def _convert_with_markitdown(path: str) -> str:
 @limiter.limit(rate_limit_for_convert, key_func=rate_limit_key_func)
 def api_convert():
     require_api_key_if_configured()
-    f = request.files.get("file")
-    if not f:
-        return jsonify(error="file is required (field name 'file')"), 400
+    
+    # Validate multipart first
+    file = request.files.get("file")
+    if not file or file.filename == "":
+        return jsonify({"error":"file_required"}), 400
+    
+    # Check file size
+    file.stream.seek(0, os.SEEK_END)
+    size = file.stream.tell()
+    file.stream.seek(0)
+    if size == 0:
+        return jsonify({"error":"file_empty"}), 400
+    
+    # Validate file type
+    if not is_file_allowed(file.filename):
+        return jsonify({"error":"file_type_not_allowed"}), 400
 
     # Initialize conv and conv_id to prevent UnboundLocalError
     conv = None
     conv_id = None
 
-    filename = secure_filename(f.filename or "upload.bin")
+    filename = secure_filename(file.filename or "upload.bin")
     queue_mode = os.getenv("QUEUE_MODE", "sync").lower()
     use_gcs = os.getenv("USE_GCS", "0").lower() in ("1","true","yes")
 
@@ -70,11 +87,11 @@ def api_convert():
     if queue_mode == "async" and use_gcs:
         # Save locally and upload to GCS for the worker to fetch
         with tempfile.NamedTemporaryFile(delete=False) as tmp:
-            f.save(tmp.name)
+            file.save(tmp.name)
             tmp_path = tmp.name
         
         # Enforce security checks
-        fallback_mime = (f.mimetype or None)
+        fallback_mime = (file.mimetype or None)
         mime, category = sniff_category(tmp_path, fallback_mime=fallback_mime)
         if category is None:
             try: os.unlink(tmp_path)
@@ -164,11 +181,11 @@ def api_convert():
 
     # ---------- synchronous fallback (existing behavior) ----------
     with tempfile.NamedTemporaryFile(delete=False) as tmp:
-        f.save(tmp.name)
+        file.save(tmp.name)
         tmp_path = tmp.name
 
     # Enforce security checks
-    fallback_mime = (f.mimetype or None)
+    fallback_mime = (file.mimetype or None)
     mime, category = sniff_category(tmp_path, fallback_mime=fallback_mime)
     if category is None:
         try: os.unlink(tmp_path)
@@ -198,12 +215,17 @@ def api_convert():
             ), 200
 
     try:
-        markdown = _convert_with_markitdown(tmp_path) or ""
-        if not markdown and original_mime == "application/pdf":
-            fb = pdf_text_fallback(tmp_path)
-            if fb:
-                markdown = fb
-        markdown = clean_markdown(markdown)
+        # Wrap downstream converter in try/except and map expected failures
+        try:
+            markdown = _convert_with_markitdown(tmp_path) or ""
+            if not markdown and original_mime == "application/pdf":
+                fb = pdf_text_fallback(tmp_path)
+                if fb:
+                    markdown = fb
+            markdown = clean_markdown(markdown)
+        except Exception as e:
+            current_app.logger.exception("extract_failed: %s", e)
+            return jsonify({"error":"extract_failed"}), 422
 
         ttl_days = int(os.getenv("RETENTION_DAYS", "30"))
         conv = Conversion(
@@ -292,18 +314,23 @@ def list_conversions():
     limit = max(1, min(limit, 100))
     offset = max(0, offset)
 
-    q = Conversion.query.order_by(Conversion.created_at.desc()).offset(offset).limit(limit).all()
-    items = []
-    for c in q:
-        items.append({
-            "id": c.id,
-            "filename": c.filename,
-            "status": c.status,
-            "created_at": (c.created_at.replace(tzinfo=timezone.utc).isoformat() if c.created_at else None),
-            "links": {
-                "self": f"/api/conversions/{c.id}",
-                "markdown": f"/api/conversions/{c.id}/markdown",
-                "view": f"/v/{c.id}",
-            }
-        })
-    return jsonify(items=items, limit=limit, offset=offset), 200
+    try:
+        # if you normally filter by current_user, gate by PUBLIC
+        q = Conversion.query.order_by(Conversion.created_at.desc()).offset(offset).limit(limit).all()
+        items = []
+        for c in q:
+            items.append({
+                "id": c.id,
+                "filename": c.filename,
+                "status": c.status,
+                "created_at": (c.created_at.replace(tzinfo=timezone.utc).isoformat() if c.created_at else None),
+                "links": {
+                    "self": f"/api/conversions/{c.id}",
+                    "markdown": f"/api/conversions/{c.id}/markdown",
+                    "view": f"/v/{c.id}",
+                }
+            })
+        return jsonify(items=items, limit=limit, offset=offset), 200
+    except Exception as e:
+        current_app.logger.exception("list_conversions failed: %s", e)
+        return jsonify([]), 200  # fail-soft for list

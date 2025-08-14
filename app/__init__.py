@@ -267,9 +267,23 @@ def create_app() -> Flask:
         with app.app_context():
             create_queue_if_not_exists()
 
-    # Add friendly error handlers (JSON for /api, HTML for UI)
+    # Add global error handler for comprehensive logging
     from flask import request, jsonify, render_template
+    import traceback, uuid, logging
+    log = logging.getLogger(__name__)
 
+    @app.errorhandler(Exception)
+    def _json_errors(e):
+        cid = str(uuid.uuid4())[:8]
+        path = getattr(request, "path", "?")
+        log.exception("EXC %s %s %s", cid, path, e)
+        code = getattr(e, "code", 500)
+        # Map common errors
+        default = "server_error"
+        name = getattr(e, "name", default) or default
+        return jsonify({"error": name, "cid": cid}), code
+
+    # Add friendly error handlers (JSON for /api, HTML for UI)
     def _wants_json():
         return request.path.startswith("/api/")
 

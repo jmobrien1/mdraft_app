@@ -13,6 +13,7 @@ from typing import Any
 
 from flask import Blueprint, jsonify, request
 from pypdf import PdfReader
+from .utils import is_file_allowed
 
 
 bp = Blueprint("estimate_api", __name__, url_prefix="/api")
@@ -102,13 +103,21 @@ def estimate() -> Any:
     Returns:
         JSON response with filetype, pages, and estimated cost
     """
-    # Check for file in request
-    if "file" not in request.files:
-        return jsonify({"error": "file required"}), 400
+    # Validate multipart first
+    file = request.files.get("file")
+    if not file or file.filename == "":
+        return jsonify({"error":"file_required"}), 400
     
-    file = request.files["file"]
-    if file.filename == "":
-        return jsonify({"error": "file required"}), 400
+    # Check file size
+    file.stream.seek(0, os.SEEK_END)
+    size = file.stream.tell()
+    file.stream.seek(0)
+    if size == 0:
+        return jsonify({"error":"file_empty"}), 400
+    
+    # Validate file type
+    if not is_file_allowed(file.filename):
+        return jsonify({"error":"file_type_not_allowed"}), 400
     
     # Read file into memory
     try:

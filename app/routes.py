@@ -444,3 +444,33 @@ def dev_openai_ping():
     except Exception as e:
         current_app.logger.exception("openai-ping failed: %s", e)
         return jsonify({"error":"openai_ping_failed"}), 502
+
+
+@bp.get("/api/dev/selftest")
+def dev_selftest():
+    import os
+    from sqlalchemy import text
+    ok = {}
+    # DB
+    try:
+        from app import db
+        cnt = db.session.execute(text("select count(*) from alembic_version")).scalar()
+        ok["db"] = {"ok": True, "alembic_rows": cnt}
+    except Exception as e:
+        ok["db"] = {"ok": False, "error": str(e)}
+    # Prompts
+    base = os.path.join(current_app.root_path, "prompts", "free_tier")
+    files = ["compliance-matrix.txt","evaluation-criteria.txt","annotated-outline.txt","submission-checklist.txt"]
+    ok["prompts"] = {f: os.path.exists(os.path.join(base, f)) for f in files}
+    # OpenAI
+    try:
+        from app.services.llm_client import chat_json
+        raw = chat_json(
+            [{"role":"system","content":"Return strictly JSON"},
+             {"role":"user","content":"{\"ping\":true}"}],
+            response_json_hint=True
+        )
+        ok["openai"] = {"ok": True, "sample": raw[:60]}
+    except Exception as e:
+        ok["openai"] = {"ok": False, "error": str(e)}
+    return jsonify(ok), 200
