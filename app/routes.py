@@ -272,7 +272,7 @@ def generate_compliance_matrix() -> Any:
         return jsonify({"error": "document_id required"}), 400
 
     prompt_path = os.path.join(current_app.root_path, "prompts", "free_tier", "compliance_matrix.txt")
-    current_app.logger.info("gen_compliance_matrix doc_id=%r stub=%r prompt=%s", doc_id, _stub_on(), prompt_path)
+    current_app.logger.info("gen_compliance_matrix: doc_id=%r prompt=%s", doc_id, prompt_path)
 
     try:
         if _stub_on():
@@ -282,6 +282,7 @@ def generate_compliance_matrix() -> Any:
 
         # Real path: load text then call model
         rfp_text = get_rfp_text(doc_id)
+        current_app.logger.info("gen_compliance_matrix: rfp_text_len=%d", len(rfp_text or ""))
         if not rfp_text:
             return jsonify({"error": "document not found"}), 404
 
@@ -306,7 +307,7 @@ def generate_evaluation_criteria() -> Any:
         return jsonify({"error": "document_id required"}), 400
 
     prompt_path = os.path.join(current_app.root_path, "prompts", "free_tier", "evaluation_criteria.txt")
-    current_app.logger.info("gen_evaluation_criteria doc_id=%r stub=%r prompt=%s", doc_id, _stub_on(), prompt_path)
+    current_app.logger.info("gen_evaluation_criteria: doc_id=%r prompt=%s", doc_id, prompt_path)
 
     try:
         if _stub_on():
@@ -316,6 +317,7 @@ def generate_evaluation_criteria() -> Any:
 
         # Real path: load text then call model
         rfp_text = get_rfp_text(doc_id)
+        current_app.logger.info("gen_evaluation_criteria: rfp_text_len=%d", len(rfp_text or ""))
         if not rfp_text:
             return jsonify({"error": "document not found"}), 404
 
@@ -339,7 +341,7 @@ def generate_annotated_outline() -> Any:
         return jsonify({"error": "document_id required"}), 400
 
     prompt_path = os.path.join(current_app.root_path, "prompts", "free_tier", "annotated_outline.txt")
-    current_app.logger.info("gen_annotated_outline doc_id=%r stub=%r prompt=%s", doc_id, _stub_on(), prompt_path)
+    current_app.logger.info("gen_annotated_outline: doc_id=%r prompt=%s", doc_id, prompt_path)
 
     try:
         if _stub_on():
@@ -349,6 +351,7 @@ def generate_annotated_outline() -> Any:
 
         # Real path: load text then call model
         rfp_text = get_rfp_text(doc_id)
+        current_app.logger.info("gen_annotated_outline: rfp_text_len=%d", len(rfp_text or ""))
         if not rfp_text:
             return jsonify({"error": "document not found"}), 404
 
@@ -372,7 +375,7 @@ def generate_submission_checklist() -> Any:
         return jsonify({"error": "document_id required"}), 400
 
     prompt_path = os.path.join(current_app.root_path, "prompts", "free_tier", "submission_checklist.txt")
-    current_app.logger.info("gen_submission_checklist doc_id=%r stub=%r prompt=%s", doc_id, _stub_on(), prompt_path)
+    current_app.logger.info("gen_submission_checklist: doc_id=%r prompt=%s", doc_id, prompt_path)
 
     try:
         if _stub_on():
@@ -382,6 +385,7 @@ def generate_submission_checklist() -> Any:
 
         # Real path: load text then call model
         rfp_text = get_rfp_text(doc_id)
+        current_app.logger.info("gen_submission_checklist: rfp_text_len=%d", len(rfp_text or ""))
         if not rfp_text:
             return jsonify({"error": "document not found"}), 404
 
@@ -393,3 +397,18 @@ def generate_submission_checklist() -> Any:
     except Exception as e:
         current_app.logger.exception("server_error on submission-checklist: %s", e)
         return jsonify({"error": "server_error"}), 500
+
+
+@bp.get("/api/dev/openai-ping")
+def dev_openai_ping():
+    from app.services.llm_client import chat_json
+    try:
+        msg = [
+            {"role":"system","content":"Return strictly JSON."},
+            {"role":"user","content":"Return {\"ok\": true, \"model\": \"echo\"} exactly as JSON."}
+        ]
+        raw = chat_json(msg, response_json_hint=True)
+        return current_app.response_class(raw, mimetype="application/json"), 200
+    except Exception as e:
+        current_app.logger.exception("openai-ping failed: %s", e)
+        return jsonify({"error":"openai_ping_failed"}), 502
