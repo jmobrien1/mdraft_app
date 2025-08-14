@@ -302,22 +302,30 @@ def generate_compliance_matrix() -> Any:
             current_app.logger.warning("gen_compliance_matrix: document not found doc_id=%r", doc_id)
             return jsonify({"error": "document not found"}), 404
 
+        # Truncate huge inputs before chunking
+        limit = int(os.getenv("MDRAFT_TRUNCATE_CHARS") or 200_000)
+        if len(rfp_text or "") > limit:
+            rfp_text = rfp_text[:limit]
+            current_app.logger.info("truncate: rfp_text -> %d chars", limit)
+
         payload = run_prompt(prompt_path, rfp_text, COMPLIANCE_MATRIX_SCHEMA)
         return jsonify(payload), 200
     except ValueError as ve:
-        code = str(ve) or "model_error"
-        # keep backward compat for old ValueError("model_error")
+        s = str(ve) or "model_error"
+        code, detail = (s.split("|",1) + [None])[:2] if "|" in s else (s, None)
         hint_map = {
-            "openai_auth": "Set a valid OPENAI_API_KEY in Render",
-            "openai_bad_request": "Check MDRAFT_MODEL and response_format support; lower chunk size",
-            "openai_rate_limit": "Retry later or lower concurrency",
-            "openai_connection": "Render outbound network/DNS issue; retry",
-            "openai_api": "Transient server error; retry",
-            "json_parse": "Model returned non-JSON; tighten prompt or reduce chunk size",
-            "model_error": "Generic model error; see server logs",
-            "openai_other": "Unhandled OpenAI error; see server logs",
+            "openai_auth":"Set a valid OPENAI_API_KEY in Render.",
+            "openai_permission":"Model not allowed / quota issue.",
+            "openai_bad_request":"Check MDRAFT_MODEL / response_format; reduce chunk size.",
+            "openai_unprocessable":"Input too long/invalid; shrink chunks or truncate.",
+            "openai_not_found":"Set MDRAFT_MODEL=gpt-4o-mini.",
+            "openai_rate_limit":"Retry later / reduce concurrency.",
+            "openai_connection":"Network/DNS hiccup; retry.",
+            "openai_api":"Transient server error; retry.",
+            "json_parse":"Model returned non-JSON; stricter prompt + extractor handles most.",
+            "model_error":"Generic model error; see logs."
         }
-        return jsonify({"error": code, "hint": hint_map.get(code)}), 502
+        return jsonify({"error": code, "hint": hint_map.get(code), "detail": detail}), 502
     except RuntimeError as re:
         # pass-through from llm_client
         code = str(re)
@@ -352,22 +360,30 @@ def generate_evaluation_criteria() -> Any:
             current_app.logger.warning("gen_evaluation_criteria: document not found doc_id=%r", doc_id)
             return jsonify({"error": "document not found"}), 404
 
+        # Truncate huge inputs before chunking
+        limit = int(os.getenv("MDRAFT_TRUNCATE_CHARS") or 200_000)
+        if len(rfp_text or "") > limit:
+            rfp_text = rfp_text[:limit]
+            current_app.logger.info("truncate: rfp_text -> %d chars", limit)
+
         payload = run_prompt(prompt_path, rfp_text, EVAL_CRITERIA_SCHEMA)
         return jsonify(payload), 200
     except ValueError as ve:
-        code = str(ve) or "model_error"
-        # keep backward compat for old ValueError("model_error")
+        s = str(ve) or "model_error"
+        code, detail = (s.split("|",1) + [None])[:2] if "|" in s else (s, None)
         hint_map = {
-            "openai_auth": "Set a valid OPENAI_API_KEY in Render",
-            "openai_bad_request": "Check MDRAFT_MODEL and response_format support; lower chunk size",
-            "openai_rate_limit": "Retry later or lower concurrency",
-            "openai_connection": "Render outbound network/DNS issue; retry",
-            "openai_api": "Transient server error; retry",
-            "json_parse": "Model returned non-JSON; tighten prompt or reduce chunk size",
-            "model_error": "Generic model error; see server logs",
-            "openai_other": "Unhandled OpenAI error; see server logs",
+            "openai_auth":"Set a valid OPENAI_API_KEY in Render.",
+            "openai_permission":"Model not allowed / quota issue.",
+            "openai_bad_request":"Check MDRAFT_MODEL / response_format; reduce chunk size.",
+            "openai_unprocessable":"Input too long/invalid; shrink chunks or truncate.",
+            "openai_not_found":"Set MDRAFT_MODEL=gpt-4o-mini.",
+            "openai_rate_limit":"Retry later / reduce concurrency.",
+            "openai_connection":"Network/DNS hiccup; retry.",
+            "openai_api":"Transient server error; retry.",
+            "json_parse":"Model returned non-JSON; stricter prompt + extractor handles most.",
+            "model_error":"Generic model error; see logs."
         }
-        return jsonify({"error": code, "hint": hint_map.get(code)}), 502
+        return jsonify({"error": code, "hint": hint_map.get(code), "detail": detail}), 502
     except RuntimeError as re:
         # pass-through from llm_client
         code = str(re)
@@ -401,22 +417,30 @@ def generate_annotated_outline() -> Any:
             current_app.logger.warning("gen_annotated_outline: document not found doc_id=%r", doc_id)
             return jsonify({"error": "document not found"}), 404
 
+        # Truncate huge inputs before chunking
+        limit = int(os.getenv("MDRAFT_TRUNCATE_CHARS") or 200_000)
+        if len(rfp_text or "") > limit:
+            rfp_text = rfp_text[:limit]
+            current_app.logger.info("truncate: rfp_text -> %d chars", limit)
+
         payload = run_prompt(prompt_path, rfp_text, OUTLINE_SCHEMA)
         return jsonify(payload), 200
     except ValueError as ve:
-        code = str(ve) or "model_error"
-        # keep backward compat for old ValueError("model_error")
+        s = str(ve) or "model_error"
+        code, detail = (s.split("|",1) + [None])[:2] if "|" in s else (s, None)
         hint_map = {
-            "openai_auth": "Set a valid OPENAI_API_KEY in Render",
-            "openai_bad_request": "Check MDRAFT_MODEL and response_format support; lower chunk size",
-            "openai_rate_limit": "Retry later or lower concurrency",
-            "openai_connection": "Render outbound network/DNS issue; retry",
-            "openai_api": "Transient server error; retry",
-            "json_parse": "Model returned non-JSON; tighten prompt or reduce chunk size",
-            "model_error": "Generic model error; see server logs",
-            "openai_other": "Unhandled OpenAI error; see server logs",
+            "openai_auth":"Set a valid OPENAI_API_KEY in Render.",
+            "openai_permission":"Model not allowed / quota issue.",
+            "openai_bad_request":"Check MDRAFT_MODEL / response_format; reduce chunk size.",
+            "openai_unprocessable":"Input too long/invalid; shrink chunks or truncate.",
+            "openai_not_found":"Set MDRAFT_MODEL=gpt-4o-mini.",
+            "openai_rate_limit":"Retry later / reduce concurrency.",
+            "openai_connection":"Network/DNS hiccup; retry.",
+            "openai_api":"Transient server error; retry.",
+            "json_parse":"Model returned non-JSON; stricter prompt + extractor handles most.",
+            "model_error":"Generic model error; see logs."
         }
-        return jsonify({"error": code, "hint": hint_map.get(code)}), 502
+        return jsonify({"error": code, "hint": hint_map.get(code), "detail": detail}), 502
     except RuntimeError as re:
         # pass-through from llm_client
         code = str(re)
@@ -450,22 +474,30 @@ def generate_submission_checklist() -> Any:
             current_app.logger.warning("gen_submission_checklist: document not found doc_id=%r", doc_id)
             return jsonify({"error": "document not found"}), 404
 
+        # Truncate huge inputs before chunking
+        limit = int(os.getenv("MDRAFT_TRUNCATE_CHARS") or 200_000)
+        if len(rfp_text or "") > limit:
+            rfp_text = rfp_text[:limit]
+            current_app.logger.info("truncate: rfp_text -> %d chars", limit)
+
         payload = run_prompt(prompt_path, rfp_text, SUBMISSION_CHECKLIST_SCHEMA)
         return jsonify(payload), 200
     except ValueError as ve:
-        code = str(ve) or "model_error"
-        # keep backward compat for old ValueError("model_error")
+        s = str(ve) or "model_error"
+        code, detail = (s.split("|",1) + [None])[:2] if "|" in s else (s, None)
         hint_map = {
-            "openai_auth": "Set a valid OPENAI_API_KEY in Render",
-            "openai_bad_request": "Check MDRAFT_MODEL and response_format support; lower chunk size",
-            "openai_rate_limit": "Retry later or lower concurrency",
-            "openai_connection": "Render outbound network/DNS issue; retry",
-            "openai_api": "Transient server error; retry",
-            "json_parse": "Model returned non-JSON; tighten prompt or reduce chunk size",
-            "model_error": "Generic model error; see server logs",
-            "openai_other": "Unhandled OpenAI error; see server logs",
+            "openai_auth":"Set a valid OPENAI_API_KEY in Render.",
+            "openai_permission":"Model not allowed / quota issue.",
+            "openai_bad_request":"Check MDRAFT_MODEL / response_format; reduce chunk size.",
+            "openai_unprocessable":"Input too long/invalid; shrink chunks or truncate.",
+            "openai_not_found":"Set MDRAFT_MODEL=gpt-4o-mini.",
+            "openai_rate_limit":"Retry later / reduce concurrency.",
+            "openai_connection":"Network/DNS hiccup; retry.",
+            "openai_api":"Transient server error; retry.",
+            "json_parse":"Model returned non-JSON; stricter prompt + extractor handles most.",
+            "model_error":"Generic model error; see logs."
         }
-        return jsonify({"error": code, "hint": hint_map.get(code)}), 502
+        return jsonify({"error": code, "hint": hint_map.get(code), "detail": detail}), 502
     except RuntimeError as re:
         # pass-through from llm_client
         code = str(re)
@@ -525,14 +557,20 @@ def dev_gen_smoke():
     }
     if tool not in base:
         return jsonify({"error":"tool_required", "allowed": list(base)}), 400
-    hy, us, schema = base[tool]
-    prompt_path = _prompt_path(current_app, hy, us)
 
-    # tiny fake RFP text
+    def _prompt_path(hy, us):
+        import os
+        base_dir = os.path.join(current_app.root_path, "prompts", "free_tier")
+        p1 = os.path.join(base_dir, hy)
+        p2 = os.path.join(base_dir, us)
+        return p1 if os.path.exists(p1) else (p2 if os.path.exists(p2) else p1)
+
+    hy, us, schema = base[tool]
+    prompt_path = _prompt_path(hy, us)
     rfp = (
       "SECTION L: Offeror shall submit a Technical Volume not to exceed 10 pages. "
       "Acknowledge all amendments. "
-      "SECTION M: Evaluation factors are Technical Approach (40%), Past Performance, and Price. "
+      "SECTION M: Evaluation factors include Technical Approach (40%), Past Performance, and Price. "
       "SECTION C: Contractor must provide a PMP-certified Project Manager."
     )
     try:
@@ -540,7 +578,7 @@ def dev_gen_smoke():
         return jsonify(payload), 200
     except Exception as e:
         current_app.logger.exception("dev_gen_smoke failed: %s", e)
-        return jsonify({"error":"dev_gen_smoke_failed"}), 502
+        return jsonify({"error":"dev_gen_smoke_failed", "detail": str(e)}), 502
 
 
 @bp.get("/api/dev/selftest")

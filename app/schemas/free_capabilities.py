@@ -27,16 +27,19 @@ EVAL_CRITERIA_SCHEMA = {
         "properties": {
             "criterion": {"type": "string"},
             "description": {"type": "string"},
-            "weight": {"oneOf": [{"type": "number"}, {"type": "null"}]},
-            "basis": {
-                "oneOf": [
-                    {"type": "string", "enum": ["Best Value", "LPTA", "Other"]},
+            # allow number, string (like "40%"), or null
+            "weight": {
+                "anyOf": [
+                    {"type": "number"},
+                    {"type": "string"},
                     {"type": "null"}
                 ]
             },
-            "source_section": {"type": "string"}
+            # make basis optional
+            "basis": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+            "source_section": {"anyOf": [{"type": "string"}, {"type": "null"}]}
         },
-        "required": ["criterion", "description", "weight", "basis", "source_section"]
+        "required": ["criterion"]
     }
 }
 

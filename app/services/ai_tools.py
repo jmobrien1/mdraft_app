@@ -78,6 +78,59 @@ def _chunk_text(s: str, max_chars: int = 8000) -> list[str]:
 def _is_array_schema(schema) -> bool:
     return bool(schema) and schema.get("type") == "array"
 
+def _schema_is_array(schema) -> bool:
+    return bool(schema) and schema.get("type") == "array"
+
+
+def _extract_first_json_array(s: str):
+    # fallback when the model adds stray text
+    import json, re
+    try:
+        j = json.loads(s)
+        if isinstance(j, list):
+            return j
+    except Exception:
+        pass
+    m = re.search(r'\[[\s\S]*\]', s)
+    if m:
+        try:
+            j = json.loads(m.group(0))
+            if isinstance(j, list):
+                return j
+        except Exception:
+            pass
+    raise ValueError("json_parse|could_not_extract_array")
+
+
+def _normalize_eval_criteria(arr):
+    norm = []
+    for it in arr:
+        if not isinstance(it, dict): 
+            continue
+        crit = (it.get("criterion") or "").strip()
+        desc = it.get("description") or ""
+        basis = it.get("basis") or None
+        w = it.get("weight", None)
+        # coerce "40%" -> 40  and "40"->40
+        if isinstance(w, str):
+            ws = w.strip().replace("%","")
+            try: w = float(ws)
+            except: w = None
+        if isinstance(w, int) or isinstance(w, float):
+            pass
+        elif w is None:
+            pass
+        else:
+            w = None
+        norm.append({
+            "criterion": crit,
+            "description": desc,
+            "weight": w,
+            "basis": basis,
+            "source_section": it.get("source_section") or it.get("rfp_reference") or None
+        })
+    return [x for x in norm if x["criterion"]]
+
 
 def _merge_arrays(items: list[list[dict]], key_candidates: list[str]) -> list[dict]:
     out, seen = [], set()
@@ -306,8 +359,13 @@ def run_prompt(prompt_path: str, rfp_text: str, json_schema: Optional[Dict[str, 
     # After reading prompt_text, compute:
     stem = _normalize_stem(prompt_path)
     model_name = os.getenv("MDRAFT_MODEL") or "gpt-4o-mini"
-    chunks = _chunk_text(rfp_text, max_chars=6000)
+    chunks = _chunk_text(rfp_text, max_chars=4000)
     LOG.info("run_prompt: model=%s stem=%s chunks=%d len0=%d", model_name, stem, len(chunks), len(chunks[0]) if chunks else 0)
+
+    is_array = _schema_is_array(json_schema)
+    use_json_object_format = bool(json_schema) and not is_array
+    LOG.info("run_prompt: stem=%s is_array=%s json_object_format=%s",
+             stem, is_array, use_json_object_format)
 
     def _call_chunk(i, ch):
         # Build messages per-chunk WITHOUT inserting the entire doc anywhere
@@ -316,10 +374,10 @@ def run_prompt(prompt_path: str, rfp_text: str, json_schema: Optional[Dict[str, 
             {"role":"user","content": f"{prompt_text}\n\n---\nRFP_CHUNK {i+1}/{len(chunks)}\nBEGIN_CHUNK\n{ch}\nEND_CHUNK"}
         ]
         try:
-            raw = chat_json(messages, response_json_hint=bool(json_schema), model=model_name)
+            raw = chat_json(messages, response_json_hint=use_json_object_format, model=model_name)
             return raw
         except RuntimeError as re:
-            # re is one of: openai_auth, openai_bad_request, openai_rate_limit, openai_connection, openai_api, openai_other
+            # re.args[0] like 'openai_bad_request|<msg>'
             raise ValueError(str(re))
 
     def _process_chunks() -> Any:
@@ -329,7 +387,10 @@ def run_prompt(prompt_path: str, rfp_text: str, json_schema: Optional[Dict[str, 
             LOG.info("chunk %d/%d len=%d stem=%s", i+1, len(chunks), len(ch), stem)
             raw = _call_chunk(i, ch)
             try:
-                parsed = json.loads(raw)
+                if is_array:
+                    parsed = _extract_first_json_array(raw)
+                else:
+                    parsed = json.loads(raw)
             except Exception as e:
                 LOG.warning("JSON parse fail on chunk %d: %s; first 200 chars: %r", i, e, (raw or "")[:200])
                 raise ValueError("json_parse")
@@ -349,6 +410,10 @@ def run_prompt(prompt_path: str, rfp_text: str, json_schema: Optional[Dict[str, 
             merged = _merge_arrays(partials, key_candidates)
         else:
             merged = _merge_outline(partials)
+
+        # Normalize evaluation criteria
+        if "evaluation_criteria" in stem:
+            merged = _normalize_eval_criteria(merged)
 
         _validate_with_schema(merged, json_schema)
         LOG.info("merged_ok stem=%s size=%s", stem, (len(merged) if isinstance(merged, list) else len(merged.get('annotations',[]))))
@@ -373,10 +438,10 @@ def run_prompt(prompt_path: str, rfp_text: str, json_schema: Optional[Dict[str, 
                     {"role":"user","content": f"{prompt_text}\n\n---\nRFP_CHUNK {i+1}/{len(chunks)}\nBEGIN_CHUNK\n{ch}\nEND_CHUNK{correction}"}
                 ]
                 try:
-                    raw = chat_json(messages, response_json_hint=bool(json_schema), model=model_name)
+                    raw = chat_json(messages, response_json_hint=use_json_object_format, model=model_name)
                     return raw
                 except RuntimeError as re:
-                    # re is one of: openai_auth, openai_bad_request, openai_rate_limit, openai_connection, openai_api, openai_other
+                    # re.args[0] like 'openai_bad_request|<msg>'
                     raise ValueError(str(re))
 
             partials = []
@@ -385,7 +450,10 @@ def run_prompt(prompt_path: str, rfp_text: str, json_schema: Optional[Dict[str, 
                 LOG.info("chunk %d/%d len=%d stem=%s (retry)", i+1, len(chunks), len(ch), stem)
                 raw = _call_chunk_with_correction(i, ch)
                 try:
-                    parsed = json.loads(raw)
+                    if is_array:
+                        parsed = _extract_first_json_array(raw)
+                    else:
+                        parsed = json.loads(raw)
                 except Exception as e:
                     LOG.warning("JSON parse fail on chunk %d: %s; first 200 chars: %r", i, e, (raw or "")[:200])
                     raise ValueError("json_parse")
@@ -405,6 +473,10 @@ def run_prompt(prompt_path: str, rfp_text: str, json_schema: Optional[Dict[str, 
                 merged = _merge_arrays(partials, key_candidates)
             else:
                 merged = _merge_outline(partials)
+
+            # Normalize evaluation criteria
+            if "evaluation_criteria" in stem:
+                merged = _normalize_eval_criteria(merged)
 
             _validate_with_schema(merged, json_schema)
             LOG.info("merged_ok stem=%s size=%s", stem, (len(merged) if isinstance(merged, list) else len(merged.get('annotations',[]))))
