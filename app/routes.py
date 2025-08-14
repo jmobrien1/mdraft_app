@@ -35,6 +35,17 @@ from .schemas.free_capabilities import (
 bp = Blueprint("main", __name__)
 
 
+def _prompt_path(current_app, hyphen_name: str, underscore_name: str) -> str:
+    import os
+    base = os.path.join(current_app.root_path, "prompts", "free_tier")
+    p1 = os.path.join(base, hyphen_name)
+    p2 = os.path.join(base, underscore_name)
+    if os.path.exists(p1): return p1
+    if os.path.exists(p2): return p2
+    # default to hyphen path (ai_tools will fall back to in-code DEFAULT_PROMPTS)
+    return p1
+
+
 @bp.route("/", methods=["GET"])
 def index() -> Any:
     """Return a welcome message indicating the service is running."""
@@ -75,10 +86,15 @@ def dev_diag():
 def dev_check_prompts():
     import os
     base = os.path.join(current_app.root_path, "prompts", "free_tier")
-    files = ["compliance-matrix.txt","evaluation-criteria.txt","annotated-outline.txt","submission-checklist.txt"]
-    exist = {f: os.path.exists(os.path.join(base, f)) for f in files}
+    files = [
+      "compliance-matrix.txt","compliance_matrix.txt",
+      "evaluation-criteria.txt","evaluation_criteria.txt",
+      "annotated-outline.txt","annotated_outline.txt",
+      "submission-checklist.txt","submission_checklist.txt",
+    ]
+    exists = {f: os.path.exists(os.path.join(base, f)) for f in files}
     flag = (os.getenv("MDRAFT_DEV_STUB") or "").strip()
-    return jsonify({"MDRAFT_DEV_STUB": flag, "stub_detected": flag.lower() in {"1","true","yes","on","y"}, "base": base, "exists": exist}), 200
+    return jsonify({"MDRAFT_DEV_STUB": flag, "stub_detected": flag.lower() in {"1","true","yes","on","y"}, "base": base, "exists": exists}), 200
 
 
 @bp.route("/upload", methods=["POST"])
@@ -271,7 +287,7 @@ def generate_compliance_matrix() -> Any:
     if not isinstance(doc_id, str) or not doc_id.strip():
         return jsonify({"error": "document_id required"}), 400
 
-    prompt_path = os.path.join(current_app.root_path, "prompts", "free_tier", "compliance_matrix.txt")
+    prompt_path = _prompt_path(current_app, "compliance-matrix.txt", "compliance_matrix.txt")
     current_app.logger.info("gen_compliance_matrix: doc_id=%r prompt=%s", doc_id, prompt_path)
 
     try:
@@ -321,7 +337,7 @@ def generate_evaluation_criteria() -> Any:
     if not isinstance(doc_id, str) or not doc_id.strip():
         return jsonify({"error": "document_id required"}), 400
 
-    prompt_path = os.path.join(current_app.root_path, "prompts", "free_tier", "evaluation_criteria.txt")
+    prompt_path = _prompt_path(current_app, "evaluation-criteria.txt", "evaluation_criteria.txt")
     current_app.logger.info("gen_evaluation_criteria: doc_id=%r prompt=%s", doc_id, prompt_path)
 
     try:
@@ -370,7 +386,7 @@ def generate_annotated_outline() -> Any:
     if not isinstance(doc_id, str) or not doc_id.strip():
         return jsonify({"error": "document_id required"}), 400
 
-    prompt_path = os.path.join(current_app.root_path, "prompts", "free_tier", "annotated_outline.txt")
+    prompt_path = _prompt_path(current_app, "annotated-outline.txt", "annotated_outline.txt")
     current_app.logger.info("gen_annotated_outline: doc_id=%r prompt=%s", doc_id, prompt_path)
 
     try:
@@ -419,7 +435,7 @@ def generate_submission_checklist() -> Any:
     if not isinstance(doc_id, str) or not doc_id.strip():
         return jsonify({"error": "document_id required"}), 400
 
-    prompt_path = os.path.join(current_app.root_path, "prompts", "free_tier", "submission_checklist.txt")
+    prompt_path = _prompt_path(current_app, "submission-checklist.txt", "submission_checklist.txt")
     current_app.logger.info("gen_submission_checklist: doc_id=%r prompt=%s", doc_id, prompt_path)
 
     try:
@@ -491,6 +507,40 @@ def dev_openai_ping_detailed():
     except RuntimeError as re:
         # return the code to the client to avoid tailing logs
         return jsonify({"error": str(re)}), 502
+
+
+@bp.post("/api/dev/gen-smoke")
+def dev_gen_smoke():
+    from flask import request, jsonify, current_app
+    from app.services.ai_tools import run_prompt
+    from app.schemas.free_capabilities import (
+        COMPLIANCE_MATRIX_SCHEMA, EVAL_CRITERIA_SCHEMA, OUTLINE_SCHEMA, SUBMISSION_CHECKLIST_SCHEMA
+    )
+    tool = (request.json or {}).get("tool","").strip().lower()
+    base = {
+      "compliance": ("compliance-matrix.txt","compliance_matrix.txt", COMPLIANCE_MATRIX_SCHEMA),
+      "criteria": ("evaluation-criteria.txt","evaluation_criteria.txt", EVAL_CRITERIA_SCHEMA),
+      "outline": ("annotated-outline.txt","annotated_outline.txt", OUTLINE_SCHEMA),
+      "checklist": ("submission-checklist.txt","submission_checklist.txt", SUBMISSION_CHECKLIST_SCHEMA),
+    }
+    if tool not in base:
+        return jsonify({"error":"tool_required", "allowed": list(base)}), 400
+    hy, us, schema = base[tool]
+    prompt_path = _prompt_path(current_app, hy, us)
+
+    # tiny fake RFP text
+    rfp = (
+      "SECTION L: Offeror shall submit a Technical Volume not to exceed 10 pages. "
+      "Acknowledge all amendments. "
+      "SECTION M: Evaluation factors are Technical Approach (40%), Past Performance, and Price. "
+      "SECTION C: Contractor must provide a PMP-certified Project Manager."
+    )
+    try:
+        payload = run_prompt(prompt_path, rfp, schema)
+        return jsonify(payload), 200
+    except Exception as e:
+        current_app.logger.exception("dev_gen_smoke failed: %s", e)
+        return jsonify({"error":"dev_gen_smoke_failed"}), 502
 
 
 @bp.get("/api/dev/selftest")
