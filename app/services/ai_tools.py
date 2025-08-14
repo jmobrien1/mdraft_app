@@ -258,27 +258,37 @@ def run_prompt(prompt_path: str, rfp_text: str, json_schema: Optional[Dict[str, 
     # After reading prompt_text, compute:
     stem = _normalize_stem(prompt_path)
     model_name = os.getenv("MDRAFT_MODEL") or "gpt-4o-mini"
-    chunks = _chunk_text(rfp_text, max_chars=8000)
+    chunks = _chunk_text(rfp_text, max_chars=6000)
     LOG.info("run_prompt: model=%s stem=%s chunks=%d len0=%d", model_name, stem, len(chunks), len(chunks[0]) if chunks else 0)
 
     def _call_chunk(i, ch):
-        header = f"{prompt_text}\n\n---\nRFP_CHUNK {i+1}/{len(chunks)}\nBEGIN_CHUNK\n{ch}\nEND_CHUNK"
+        # Build messages per-chunk WITHOUT inserting the entire doc anywhere
         messages = [
             {"role":"system","content":"You are a specialized proposal assistant. Respond with VALID JSON ONLY. No prose."},
-            {"role":"user","content": header},
+            {"role":"user","content": f"{prompt_text}\n\n---\nRFP_CHUNK {i+1}/{len(chunks)}\nBEGIN_CHUNK\n{ch}\nEND_CHUNK"}
         ]
-        raw = chat_json(messages, response_json_hint=bool(json_schema), model=model_name)
-        return raw
+        try:
+            raw = chat_json(messages, response_json_hint=bool(json_schema), model=model_name)
+            return raw
+        except RuntimeError as e:
+            # Map RuntimeError codes to ValueError codes
+            error_code = str(e)
+            if error_code in ["openai_auth", "openai_rate_limit", "openai_timeout", "openai_other"]:
+                raise ValueError(error_code)
+            else:
+                raise ValueError("openai_other")
 
     def _process_chunks() -> Any:
         partials = []
         for i, ch in enumerate(chunks):
+            # Log exactly what's being sent to the model
+            LOG.info("chunk %d/%d len=%d stem=%s", i+1, len(chunks), len(ch), stem)
             raw = _call_chunk(i, ch)
             try:
                 parsed = json.loads(raw)
             except Exception as e:
                 LOG.warning("JSON parse fail on chunk %d: %s; first 200 chars: %r", i, e, (raw or "")[:200])
-                raise ValueError("model_error")
+                raise ValueError("json_parse")
             _validate_with_schema(parsed, json_schema)
             partials.append(parsed)
 
@@ -297,7 +307,7 @@ def run_prompt(prompt_path: str, rfp_text: str, json_schema: Optional[Dict[str, 
             merged = _merge_outline(partials)
 
         _validate_with_schema(merged, json_schema)
-        LOG.info("run_prompt: merged_ok stem=%s count=%s", stem, (len(merged) if isinstance(merged, list) else len(merged.get("annotations",[]))))
+        LOG.info("merged_ok stem=%s size=%s", stem, (len(merged) if isinstance(merged, list) else len(merged.get('annotations',[]))))
         return merged
 
     # First attempt
@@ -313,22 +323,32 @@ def run_prompt(prompt_path: str, rfp_text: str, json_schema: Optional[Dict[str, 
         try:
             # Update user message with correction hint
             def _call_chunk_with_correction(i, ch):
-                header = f"{prompt_text}\n\n---\nRFP_CHUNK {i+1}/{len(chunks)}\nBEGIN_CHUNK\n{ch}\nEND_CHUNK{correction}"
+                # Build messages per-chunk WITHOUT inserting the entire doc anywhere
                 messages = [
                     {"role":"system","content":"You are a specialized proposal assistant. Respond with VALID JSON ONLY. No prose."},
-                    {"role":"user","content": header},
+                    {"role":"user","content": f"{prompt_text}\n\n---\nRFP_CHUNK {i+1}/{len(chunks)}\nBEGIN_CHUNK\n{ch}\nEND_CHUNK{correction}"}
                 ]
-                raw = chat_json(messages, response_json_hint=bool(json_schema), model=model_name)
-                return raw
+                try:
+                    raw = chat_json(messages, response_json_hint=bool(json_schema), model=model_name)
+                    return raw
+                except RuntimeError as e:
+                    # Map RuntimeError codes to ValueError codes
+                    error_code = str(e)
+                    if error_code in ["openai_auth", "openai_rate_limit", "openai_timeout", "openai_other"]:
+                        raise ValueError(error_code)
+                    else:
+                        raise ValueError("openai_other")
 
             partials = []
             for i, ch in enumerate(chunks):
+                # Log exactly what's being sent to the model (retry)
+                LOG.info("chunk %d/%d len=%d stem=%s (retry)", i+1, len(chunks), len(ch), stem)
                 raw = _call_chunk_with_correction(i, ch)
                 try:
                     parsed = json.loads(raw)
                 except Exception as e:
                     LOG.warning("JSON parse fail on chunk %d: %s; first 200 chars: %r", i, e, (raw or "")[:200])
-                    raise ValueError("model_error")
+                    raise ValueError("json_parse")
                 _validate_with_schema(parsed, json_schema)
                 partials.append(parsed)
 
@@ -347,11 +367,17 @@ def run_prompt(prompt_path: str, rfp_text: str, json_schema: Optional[Dict[str, 
                 merged = _merge_outline(partials)
 
             _validate_with_schema(merged, json_schema)
-            LOG.info("run_prompt: merged_ok stem=%s count=%s", stem, (len(merged) if isinstance(merged, list) else len(merged.get("annotations",[]))))
+            LOG.info("merged_ok stem=%s size=%s", stem, (len(merged) if isinstance(merged, list) else len(merged.get('annotations',[]))))
             return merged
         except Exception as e:
             LOG.exception("Second attempt failed: %s", e)
-            raise ValueError("model_error")
+            # Re-raise the original error if it's a ValueError with specific code
+            if isinstance(e, ValueError):
+                raise
+            raise ValueError("openai_other")
     except Exception as e:
         LOG.exception("Model invocation failed: %s", e)
-        raise ValueError("model_error")
+        # Re-raise the original error if it's a ValueError with specific code
+        if isinstance(e, ValueError):
+            raise
+        raise ValueError("openai_other")

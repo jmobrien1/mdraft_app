@@ -282,15 +282,23 @@ def generate_compliance_matrix() -> Any:
 
         # Real path: load text then call model
         rfp_text = get_rfp_text(doc_id)
-        current_app.logger.info("gen_compliance_matrix: rfp_text_len=%d", len(rfp_text or ""))
         if not rfp_text:
+            current_app.logger.warning("gen_compliance_matrix: document not found doc_id=%r", doc_id)
             return jsonify({"error": "document not found"}), 404
 
         payload = run_prompt(prompt_path, rfp_text, COMPLIANCE_MATRIX_SCHEMA)
         return jsonify(payload), 200
     except ValueError as ve:
-        current_app.logger.exception("model_error on compliance-matrix: %s", ve)
-        return jsonify({"error": "model_error"}), 502
+        code = str(ve) or "model_error"
+        current_app.logger.exception("gen_compliance_matrix failed: %s", code)
+        hint_map = {
+           "openai_auth":"Set OPENAI_API_KEY on Render",
+           "openai_rate_limit":"Retry later / reduce concurrency",
+           "openai_timeout":"Increase MDRAFT_TIMEOUT_SEC or reduce chunk size",
+           "json_parse":"Model returned non-JSON; tighten prompt or lower chunk size",
+           "openai_other":"See server logs",
+        }
+        return jsonify({"error": code, "hint": hint_map.get(code)}), 502
     except Exception as e:
         current_app.logger.exception("server_error on compliance-matrix: %s", e)
         return jsonify({"error": "server_error"}), 500
@@ -317,15 +325,23 @@ def generate_evaluation_criteria() -> Any:
 
         # Real path: load text then call model
         rfp_text = get_rfp_text(doc_id)
-        current_app.logger.info("gen_evaluation_criteria: rfp_text_len=%d", len(rfp_text or ""))
         if not rfp_text:
+            current_app.logger.warning("gen_evaluation_criteria: document not found doc_id=%r", doc_id)
             return jsonify({"error": "document not found"}), 404
 
         payload = run_prompt(prompt_path, rfp_text, EVAL_CRITERIA_SCHEMA)
         return jsonify(payload), 200
     except ValueError as ve:
-        current_app.logger.exception("model_error on evaluation-criteria: %s", ve)
-        return jsonify({"error": "model_error"}), 502
+        code = str(ve) or "model_error"
+        current_app.logger.exception("gen_evaluation_criteria failed: %s", code)
+        hint_map = {
+           "openai_auth":"Set OPENAI_API_KEY on Render",
+           "openai_rate_limit":"Retry later / reduce concurrency",
+           "openai_timeout":"Increase MDRAFT_TIMEOUT_SEC or reduce chunk size",
+           "json_parse":"Model returned non-JSON; tighten prompt or lower chunk size",
+           "openai_other":"See server logs",
+        }
+        return jsonify({"error": code, "hint": hint_map.get(code)}), 502
     except Exception as e:
         current_app.logger.exception("server_error on evaluation-criteria: %s", e)
         return jsonify({"error": "server_error"}), 500
@@ -351,15 +367,23 @@ def generate_annotated_outline() -> Any:
 
         # Real path: load text then call model
         rfp_text = get_rfp_text(doc_id)
-        current_app.logger.info("gen_annotated_outline: rfp_text_len=%d", len(rfp_text or ""))
         if not rfp_text:
+            current_app.logger.warning("gen_annotated_outline: document not found doc_id=%r", doc_id)
             return jsonify({"error": "document not found"}), 404
 
         payload = run_prompt(prompt_path, rfp_text, OUTLINE_SCHEMA)
         return jsonify(payload), 200
     except ValueError as ve:
-        current_app.logger.exception("model_error on annotated-outline: %s", ve)
-        return jsonify({"error": "model_error"}), 502
+        code = str(ve) or "model_error"
+        current_app.logger.exception("gen_annotated_outline failed: %s", code)
+        hint_map = {
+           "openai_auth":"Set OPENAI_API_KEY on Render",
+           "openai_rate_limit":"Retry later / reduce concurrency",
+           "openai_timeout":"Increase MDRAFT_TIMEOUT_SEC or reduce chunk size",
+           "json_parse":"Model returned non-JSON; tighten prompt or lower chunk size",
+           "openai_other":"See server logs",
+        }
+        return jsonify({"error": code, "hint": hint_map.get(code)}), 502
     except Exception as e:
         current_app.logger.exception("server_error on annotated-outline: %s", e)
         return jsonify({"error": "server_error"}), 500
@@ -385,15 +409,23 @@ def generate_submission_checklist() -> Any:
 
         # Real path: load text then call model
         rfp_text = get_rfp_text(doc_id)
-        current_app.logger.info("gen_submission_checklist: rfp_text_len=%d", len(rfp_text or ""))
         if not rfp_text:
+            current_app.logger.warning("gen_submission_checklist: document not found doc_id=%r", doc_id)
             return jsonify({"error": "document not found"}), 404
 
         payload = run_prompt(prompt_path, rfp_text, SUBMISSION_CHECKLIST_SCHEMA)
         return jsonify(payload), 200
     except ValueError as ve:
-        current_app.logger.exception("model_error on submission-checklist: %s", ve)
-        return jsonify({"error": "model_error"}), 502
+        code = str(ve) or "model_error"
+        current_app.logger.exception("gen_submission_checklist failed: %s", code)
+        hint_map = {
+           "openai_auth":"Set OPENAI_API_KEY on Render",
+           "openai_rate_limit":"Retry later / reduce concurrency",
+           "openai_timeout":"Increase MDRAFT_TIMEOUT_SEC or reduce chunk size",
+           "json_parse":"Model returned non-JSON; tighten prompt or lower chunk size",
+           "openai_other":"See server logs",
+        }
+        return jsonify({"error": code, "hint": hint_map.get(code)}), 502
     except Exception as e:
         current_app.logger.exception("server_error on submission-checklist: %s", e)
         return jsonify({"error": "server_error"}), 500

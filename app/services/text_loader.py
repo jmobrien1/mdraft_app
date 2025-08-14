@@ -9,18 +9,63 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 from typing import Optional
 
 from flask import current_app
 
 from .storage import Storage
 from ..models import Job
+from ..models_conversion import Conversion
 from .. import db
 
 
-def get_rfp_text(document_id: str) -> Optional[str]:
+def get_rfp_text(document_id: str) -> str:
     """
     Retrieve and extract text from an RFP document.
+    
+    This function uses the exact same path as the markdown endpoint:
+    GET /api/conversions/<id>/markdown
+    
+    Args:
+        document_id: The document ID (conversion ID as string)
+        
+    Returns:
+        The extracted text content as string, or empty string on failure
+    """
+    logger = logging.getLogger(__name__)
+    
+    # Add a clear log of what path/key it tried
+    current_app.logger.info("get_rfp_text: attempting fetch for document_id=%r", document_id)
+    
+    try:
+        # Use the exact same path as the markdown endpoint
+        conv = Conversion.query.get(document_id)
+        if conv is None:
+            current_app.logger.warning("get_rfp_text: conversion not found for document_id=%r", document_id)
+            return ""
+        
+        # Get the markdown content (same as the endpoint)
+        text = conv.markdown or ""
+        
+        # Apply truncation for safety
+        truncate_limit = int(os.getenv("MDRAFT_TRUNCATE_CHARS", "250000"))
+        if len(text) > truncate_limit:
+            original_len = len(text)
+            text = text[:truncate_limit]
+            current_app.logger.info("get_rfp_text: truncated to %d chars (was %d)", truncate_limit, original_len)
+        
+        current_app.logger.info("get_rfp_text: success document_id=%r len=%d", document_id, len(text))
+        return text
+        
+    except Exception as e:
+        current_app.logger.exception("get_rfp_text: failed for document_id=%r: %s", document_id, e)
+        return ""
+
+
+def get_rfp_text_legacy(document_id: str) -> Optional[str]:
+    """
+    Legacy text loading function (kept for backward compatibility).
     
     This function loads the original file by document_id and extracts text
     based on the file type. It supports PDF (using pypdf), TXT, and MD files.
@@ -37,7 +82,7 @@ def get_rfp_text(document_id: str) -> Optional[str]:
     logger = logging.getLogger(__name__)
     
     # Add a clear log of what path/key it tried
-    current_app.logger.info("get_rfp_text: attempting fetch for document_id=%r", document_id)
+    current_app.logger.info("get_rfp_text_legacy: attempting fetch for document_id=%r", document_id)
     
     try:
         job_id = int(document_id)
