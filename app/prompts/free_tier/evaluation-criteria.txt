@@ -6,3 +6,4 @@ Extract evaluation factors from Section M or similar:
 - basis: 'Best Value' or 'LPTA' if stated
 - source_section: where it came from
 Return a JSON array only.
+Limit to at most 40 items for the current chunk.

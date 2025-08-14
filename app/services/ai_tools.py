@@ -22,6 +22,7 @@ MAX_CHUNKS = int(os.getenv("MDRAFT_MAX_CHUNKS") or 12)                # hard sto
 TRUNCATE_CHARS = int(os.getenv("MDRAFT_TRUNCATE_CHARS") or 200_000)   # pre-truncate big docs
 MAX_MERGED_ITEMS = int(os.getenv("MDRAFT_MAX_MERGED_ITEMS") or 300)   # cap list growth
 DEFAULT_MODEL_MAX_TOKENS = int(os.getenv("MDRAFT_MAX_TOKENS") or 700) # arrays don't need a lot
+RELAX_MAX_OBJS_PER_CHUNK = int(os.getenv("MDRAFT_RELAX_MAX_OBJS_PER_CHUNK") or 80)
 
 DEV_TRUE = {"1", "true", "yes", "on", "y"}
 
@@ -99,6 +100,33 @@ def _extract_first_json_array(s: str):
     except Exception:
         pass
     raise ValueError("json_parse|malformed_array")
+
+def _extract_relaxed_array(s: str):
+    """Grab every complete {...} we can find; ignore incomplete tails."""
+    objs = []
+    depth = 0
+    start = None
+    for i, ch in enumerate(s):
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and start is not None:
+                    frag = s[start:i+1]
+                    try:
+                        obj = json.loads(frag)
+                        objs.append(obj)
+                        if len(objs) >= RELAX_MAX_OBJS_PER_CHUNK:
+                            break
+                    except Exception:
+                        # skip malformed fragments
+                        pass
+    if objs:
+        return objs
+    raise ValueError("json_parse|relaxed_failed")
 
 
 def _normalize_eval_criteria(arr):
@@ -375,7 +403,7 @@ def run_prompt(prompt_path: str, rfp_text: str, json_schema: Optional[Dict[str, 
             {"role": "user", "content": chunk},
         ]
         # arrays: keep tokens small
-        max_tokens = DEFAULT_MODEL_MAX_TOKENS if is_array else 1200
+        max_tokens = 1000 if is_array else 1200
 
         try:
             raw = chat_json(messages, response_json_hint=use_json_object_format, model=model_name, max_tokens=max_tokens)
@@ -386,14 +414,15 @@ def run_prompt(prompt_path: str, rfp_text: str, json_schema: Optional[Dict[str, 
         if is_array:
             try:
                 part = _extract_first_json_array(raw)
+            except Exception as ex:
+                LOG.warning("array parse failed (strict); trying relaxed: %s", str(ex))
+                part = _extract_relaxed_array(raw)
+            if part:
                 merged.extend(part)
-                if len(merged) >= MAX_MERGED_ITEMS:
-                    LOG.warning("run_prompt: reached MAX_MERGED_ITEMS=%d; stopping early", MAX_MERGED_ITEMS)
-                    merged = merged[:MAX_MERGED_ITEMS]
-                    break
-            except Exception as e:
-                LOG.warning("JSON parse fail on chunk %d: %s; first 200 chars: %r", chunks_used, e, (raw or "")[:200])
-                raise ValueError("json_parse")
+            if len(merged) >= MAX_MERGED_ITEMS:
+                LOG.warning("run_prompt: reached MAX_MERGED_ITEMS=%d; stopping early", MAX_MERGED_ITEMS)
+                merged = merged[:MAX_MERGED_ITEMS]
+                break
         else:
             # object – later chunks can refine; keep last valid
             try:

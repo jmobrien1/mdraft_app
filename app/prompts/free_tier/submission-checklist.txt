@@ -5,3 +5,4 @@ Extract submission requirements:
 - details: constraints (page limit, font, margins, portal/email, due time, naming)
 - rfp_reference: where it came from
 Return a JSON array only.
+Limit to at most 60 items for the current chunk.

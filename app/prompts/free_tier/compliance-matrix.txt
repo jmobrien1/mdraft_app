@@ -6,3 +6,4 @@ For each 'shall', 'must', deliverable, or submission instruction found in the RF
 - requirement_type: one of [shall, must, should, deliverable, format, submission]
 - suggested_proposal_section: best matching proposal section
 Return a JSON array only.
+Limit to at most 60 items for the current chunk.

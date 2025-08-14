@@ -76,7 +76,7 @@ class JSONFormatter(logging.Formatter):
         # Append any extra context stored in the record.
         if record.args:
             log_data["args"] = record.args
-        return json.dumps(log_data)
+        return json.dumps(log_data, default=str)
 
 
 def create_app() -> Flask:
