@@ -306,27 +306,45 @@ def get_conversion_markdown(id):
 @bp.get("/conversions")
 @limiter.limit(os.getenv("LIST_RATE_LIMIT", "240 per minute"))
 def list_conversions():
-    from flask import request, jsonify, current_app, g
+    from flask import request, jsonify, current_app, make_response, g
     try:
         limit = max(1, min(int(request.args.get("limit", 10)), 50))
+        offset = max(0, int(request.args.get("offset", 0)))
         public = bool(os.getenv("MDRAFT_PUBLIC_MODE"))
         user = getattr(g, "user", None)
 
         if user:
-            q = Conversion.query.filter_by(user_id=user.id).order_by(Conversion.created_at.desc()).limit(limit)
+            q = (Conversion.query
+                 .filter_by(user_id=user.id)
+                 .order_by(Conversion.created_at.desc())
+                 .offset(offset).limit(limit))
         elif public:
-            # public beta: last N conversions (non-sensitive fields)
-            q = Conversion.query.order_by(Conversion.created_at.desc()).limit(limit)
+            q = (Conversion.query
+                 .order_by(Conversion.created_at.desc())
+                 .offset(offset).limit(limit))
         else:
-            return jsonify([]), 200
+            # not public and no user: return empty list
+            resp = make_response(jsonify([]), 200)
+            resp.headers["X-Limit"] = str(limit)
+            resp.headers["X-Offset"] = str(offset)
+            return resp
 
         items = [{
             "id": c.id,
             "filename": c.filename,
-            "created_at": c.created_at.isoformat() if c.created_at else None,
-            "size_bytes": getattr(c, "size_bytes", None),
+            "status": c.status,
+            "created_at": c.created_at.isoformat(),
+            "links": {
+                "self": f"/api/conversions/{c.id}",
+                "markdown": f"/api/conversions/{c.id}/markdown",
+                "view": f"/v/{c.id}",
+            },
         } for c in q.all()]
-        return jsonify(items), 200
+
+        resp = make_response(jsonify(items), 200)
+        resp.headers["X-Limit"] = str(limit)
+        resp.headers["X-Offset"] = str(offset)
+        return resp
     except Exception as e:
         current_app.logger.exception("/api/conversions failed")
         return jsonify({"error":"conversions_failed","detail":str(e)[:200]}), 500
