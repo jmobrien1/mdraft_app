@@ -22,6 +22,10 @@ from sqlalchemy import create_engine, text
 print("[SENTRY] importing FLASK_APP:", os.environ.get("FLASK_APP"))
 # Do not import whole app; just DB ping to reduce side effects
 url = os.environ.get("DATABASE_URL")
+if url.startswith("postgres://"):
+    url = url.replace("postgres://", "postgresql+psycopg://", 1)
+elif url.startswith("postgresql://") and "+psycopg" not in url:
+    url = url.replace("postgresql://", "postgresql+psycopg://", 1)
 engine = create_engine(url, future=True)
 with engine.connect() as c:
     ver = c.execute(text("SELECT version();")).scalar()
@@ -50,6 +54,10 @@ python - <<'PY'
 import os, sys
 from sqlalchemy import create_engine, text
 url = os.environ["DATABASE_URL"]
+if url.startswith("postgres://"):
+    url = url.replace("postgres://", "postgresql+psycopg://", 1)
+elif url.startswith("postgresql://") and "+psycopg" not in url:
+    url = url.replace("postgresql://", "postgresql+psycopg://", 1)
 engine = create_engine(url, future=True)
 need = [
     ("proposals","visitor_session_id"),
