@@ -18,14 +18,48 @@ LOG = logging.getLogger(__name__)
 
 DEV_TRUE = {"1", "true", "yes", "on", "y"}
 
+DEFAULT_PROMPTS = {
+    "compliance_matrix": """OUTPUT: Return a JSON array only. No markdown, no prose.
+For each 'shall', 'must', deliverable, or submission instruction found in the RFP chunk:
+- requirement_id: short stable ID (e.g., L-1, M-2, C-3 or a hash prefix)
+- requirement_text: verbatim or near-verbatim sentence
+- rfp_reference: where it came from (e.g., "Section L, p.10")
+- requirement_type: one of [shall, must, should, deliverable, format, submission]
+- suggested_proposal_section: best matching proposal section
+Return a JSON array only.
+""",
+    "evaluation_criteria": """OUTPUT: Return a JSON array only. No markdown, no prose.
+Extract evaluation factors from Section M or similar:
+- criterion: name of factor (e.g., Technical Approach)
+- description: short description/what matters
+- weight: numeric if explicitly stated, otherwise null
+- basis: 'Best Value' or 'LPTA' if stated
+- source_section: where it came from
+Return a JSON array only.
+""",
+    "annotated_outline": """OUTPUT: Return a JSON object only. No markdown, no prose.
+Fields:
+- outline_markdown: markdown headings I., II., III., with sub-bullets matching Section L instructions
+- annotations: array of { heading, rfp_reference, notes } (one+ per top-level section)
+Return: { "outline_markdown": "...", "annotations": [...] }
+""",
+    "submission_checklist": """OUTPUT: Return a JSON array only. No markdown, no prose.
+Extract submission requirements:
+- item: the checkable item (e.g., "SF-1449 signed", "Technical Volume (PDF)")
+- category: one of [Form, Format, Delivery, Schedule]
+- details: constraints (page limit, font, margins, portal/email, due time, naming)
+- rfp_reference: where it came from
+Return a JSON array only.
+""",
+}
+
 
 def _bool_env(name: str) -> bool:
     return (os.getenv(name) or "").strip().lower() in DEV_TRUE
 
 
-def _normalize_stem(path: str) -> str:
-    import os, re
-    return re.sub(r'[^a-z0-9]+', '_', os.path.basename(path).lower())
+def _normalize_stem(p: str) -> str:
+    return re.sub(r'[^a-z0-9]+', '_', os.path.basename(p).lower())
 
 
 def _chunk_text(s: str, max_chars: int = 8000) -> list[str]:
@@ -216,8 +250,22 @@ def _validate_with_schema(payload: Any, schema: Optional[Dict[str, Any]]) -> Non
 
 
 def _load_prompt_text(prompt_path: str) -> str:
-    with open(prompt_path, "r", encoding="utf-8") as f:
-        return f.read()
+    try:
+        with open(prompt_path, "r", encoding="utf-8") as f:
+            return f.read()
+    except Exception:
+        # fallback to built-in defaults when files are not deployed
+        stem = _normalize_stem(prompt_path)
+        key = None
+        if "compliance_matrix" in stem: key = "compliance_matrix"
+        elif "evaluation_criteria" in stem: key = "evaluation_criteria"
+        elif "annotated_outline" in stem: key = "annotated_outline"
+        elif "submission_checklist" in stem: key = "submission_checklist"
+        if key and key in DEFAULT_PROMPTS:
+            LOG.warning("Prompt file missing; using DEFAULT_PROMPTS[%s] for %s", key, prompt_path)
+            return DEFAULT_PROMPTS[key]
+        LOG.exception("Prompt file missing and no default for %s", prompt_path)
+        raise
 
 
 def run_prompt(prompt_path: str, rfp_text: str, json_schema: Optional[Dict[str, Any]]) -> Any:

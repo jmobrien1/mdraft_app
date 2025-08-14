@@ -1,15 +1,8 @@
-ROLE: Proposal Evaluation Analyst
-GOAL: Identify evaluation criteria and sub-factors (typically Section M).
-OUTPUT (JSON Array): [
-  {
-    "criterion": "string",
-    "description": "string",
-    "weight": "number|null",        // numerical weight if explicit, else null
-    "basis": "Best Value|LPTA|Other|null",
-    "source_section": "string"
-  }, ...
-]
-RULES:
-- Include only items that drive scoring.
-- If weights not stated, set weight = null.
-- Capture "basis" if stated (best value tradeoff, LPTA).
+Return a JSON array only. No markdown, no prose.
+Extract evaluation factors from Section M or similar:
+- criterion: name of factor (e.g., Technical Approach)
+- description: short description/what matters
+- weight: numeric if explicitly stated, otherwise null
+- basis: 'Best Value' or 'LPTA' if stated
+- source_section: where it came from
+Return a JSON array only.

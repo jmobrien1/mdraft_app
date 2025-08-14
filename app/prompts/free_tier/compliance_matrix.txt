@@ -1,16 +1,8 @@
-ROLE: Proposal Compliance Analyst
-GOAL: Extract every actionable requirement from the RFP (including Sections C, L, M, attachments).
-OUTPUT (JSON Array): [
-  {
-    "requirement_id": "string",          // stable id like C-1 or L-3 if available; else synthesize
-    "requirement_text": "string",        // preserve exact RFP wording
-    "rfp_reference": "string",           // section and/or page ref
-    "requirement_type": "shall|must|should|deliverable|format|submission",
-    "suggested_proposal_section": "string"
-  }, ...
-]
-RULES:
-- Only include actionable obligations (shall, must) and submission/format rules that affect compliance.
-- Preserve exact phrasing; no paraphrase.
-- Include requirements from embedded tables and attachments if present.
-- If unsure of section id, still include with best-guess reference.
+Return a JSON array only. No markdown, no prose.
+For each 'shall', 'must', deliverable, or submission instruction found in the RFP chunk:
+- requirement_id: short stable ID (e.g., L-1, M-2, C-3 or a hash prefix)
+- requirement_text: verbatim or near-verbatim sentence
+- rfp_reference: where it came from (e.g., "Section L, p.10")
+- requirement_type: one of [shall, must, should, deliverable, format, submission]
+- suggested_proposal_section: best matching proposal section
+Return a JSON array only.
