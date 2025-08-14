@@ -16,7 +16,8 @@ COMPLIANCE_MATRIX_SCHEMA = {
             },
             "suggested_proposal_section": {"type": "string"}
         },
-        "required": ["requirement_id", "requirement_text", "rfp_reference", "requirement_type", "suggested_proposal_section"]
+        "required": ["requirement_id", "requirement_text", "rfp_reference", "requirement_type", "suggested_proposal_section"],
+        "additionalProperties": True
     }
 }
 
@@ -27,19 +28,14 @@ EVAL_CRITERIA_SCHEMA = {
         "properties": {
             "criterion": {"type": "string"},
             "description": {"type": "string"},
-            # allow number, string (like "40%"), or null
-            "weight": {
-                "anyOf": [
-                    {"type": "number"},
-                    {"type": "string"},
-                    {"type": "null"}
-                ]
+            "weight": {  # number | string | null
+                "anyOf": [{"type": "number"}, {"type": "string"}, {"type": "null"}]
             },
-            # make basis optional
             "basis": {"anyOf": [{"type": "string"}, {"type": "null"}]},
             "source_section": {"anyOf": [{"type": "string"}, {"type": "null"}]}
         },
-        "required": ["criterion"]
+        "required": ["criterion"],
+        "additionalProperties": True
     }
 }
 
@@ -76,6 +72,7 @@ SUBMISSION_CHECKLIST_SCHEMA = {
             "details": {"type": "string"},
             "rfp_reference": {"type": "string"}
         },
-        "required": ["item", "category", "details", "rfp_reference"]
+        "required": ["item", "category", "details", "rfp_reference"],
+        "additionalProperties": True
     }
 }

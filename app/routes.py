@@ -314,16 +314,17 @@ def generate_compliance_matrix() -> Any:
         s = str(ve) or "model_error"
         code, detail = (s.split("|",1) + [None])[:2] if "|" in s else (s, None)
         hint_map = {
-            "openai_auth":"Set a valid OPENAI_API_KEY in Render.",
-            "openai_permission":"Model not allowed / quota issue.",
-            "openai_bad_request":"Check MDRAFT_MODEL / response_format; reduce chunk size.",
-            "openai_unprocessable":"Input too long/invalid; shrink chunks or truncate.",
-            "openai_not_found":"Set MDRAFT_MODEL=gpt-4o-mini.",
-            "openai_rate_limit":"Retry later / reduce concurrency.",
-            "openai_connection":"Network/DNS hiccup; retry.",
+            "openai_auth":"Set OPENAI_API_KEY.",
+            "openai_permission":"Model/quota access issue.",
+            "openai_bad_request":"Check MDRAFT_MODEL (gpt-4o-mini) & response_format; shrink chunks.",
+            "openai_unprocessable":"Input too long/invalid; reduce chunk size or truncate.",
+            "openai_not_found":"Wrong model name; use gpt-4o-mini.",
+            "openai_rate_limit":"Retry or reduce concurrency.",
+            "openai_connection":"Network hiccup; retry.",
             "openai_api":"Transient server error; retry.",
-            "json_parse":"Model returned non-JSON; stricter prompt + extractor handles most.",
-            "model_error":"Generic model error; see logs."
+            "json_parse":"Model didn't return a clean array; extractor failed.",
+            "model_error":"Generic model error.",
+            "openai_other":"Unhandled OpenAI error."
         }
         return jsonify({"error": code, "hint": hint_map.get(code), "detail": detail}), 502
     except RuntimeError as re:
@@ -372,16 +373,17 @@ def generate_evaluation_criteria() -> Any:
         s = str(ve) or "model_error"
         code, detail = (s.split("|",1) + [None])[:2] if "|" in s else (s, None)
         hint_map = {
-            "openai_auth":"Set a valid OPENAI_API_KEY in Render.",
-            "openai_permission":"Model not allowed / quota issue.",
-            "openai_bad_request":"Check MDRAFT_MODEL / response_format; reduce chunk size.",
-            "openai_unprocessable":"Input too long/invalid; shrink chunks or truncate.",
-            "openai_not_found":"Set MDRAFT_MODEL=gpt-4o-mini.",
-            "openai_rate_limit":"Retry later / reduce concurrency.",
-            "openai_connection":"Network/DNS hiccup; retry.",
+            "openai_auth":"Set OPENAI_API_KEY.",
+            "openai_permission":"Model/quota access issue.",
+            "openai_bad_request":"Check MDRAFT_MODEL (gpt-4o-mini) & response_format; shrink chunks.",
+            "openai_unprocessable":"Input too long/invalid; reduce chunk size or truncate.",
+            "openai_not_found":"Wrong model name; use gpt-4o-mini.",
+            "openai_rate_limit":"Retry or reduce concurrency.",
+            "openai_connection":"Network hiccup; retry.",
             "openai_api":"Transient server error; retry.",
-            "json_parse":"Model returned non-JSON; stricter prompt + extractor handles most.",
-            "model_error":"Generic model error; see logs."
+            "json_parse":"Model didn't return a clean array; extractor failed.",
+            "model_error":"Generic model error.",
+            "openai_other":"Unhandled OpenAI error."
         }
         return jsonify({"error": code, "hint": hint_map.get(code), "detail": detail}), 502
     except RuntimeError as re:
@@ -429,16 +431,17 @@ def generate_annotated_outline() -> Any:
         s = str(ve) or "model_error"
         code, detail = (s.split("|",1) + [None])[:2] if "|" in s else (s, None)
         hint_map = {
-            "openai_auth":"Set a valid OPENAI_API_KEY in Render.",
-            "openai_permission":"Model not allowed / quota issue.",
-            "openai_bad_request":"Check MDRAFT_MODEL / response_format; reduce chunk size.",
-            "openai_unprocessable":"Input too long/invalid; shrink chunks or truncate.",
-            "openai_not_found":"Set MDRAFT_MODEL=gpt-4o-mini.",
-            "openai_rate_limit":"Retry later / reduce concurrency.",
-            "openai_connection":"Network/DNS hiccup; retry.",
+            "openai_auth":"Set OPENAI_API_KEY.",
+            "openai_permission":"Model/quota access issue.",
+            "openai_bad_request":"Check MDRAFT_MODEL (gpt-4o-mini) & response_format; shrink chunks.",
+            "openai_unprocessable":"Input too long/invalid; reduce chunk size or truncate.",
+            "openai_not_found":"Wrong model name; use gpt-4o-mini.",
+            "openai_rate_limit":"Retry or reduce concurrency.",
+            "openai_connection":"Network hiccup; retry.",
             "openai_api":"Transient server error; retry.",
-            "json_parse":"Model returned non-JSON; stricter prompt + extractor handles most.",
-            "model_error":"Generic model error; see logs."
+            "json_parse":"Model didn't return a clean array; extractor failed.",
+            "model_error":"Generic model error.",
+            "openai_other":"Unhandled OpenAI error."
         }
         return jsonify({"error": code, "hint": hint_map.get(code), "detail": detail}), 502
     except RuntimeError as re:
@@ -486,16 +489,17 @@ def generate_submission_checklist() -> Any:
         s = str(ve) or "model_error"
         code, detail = (s.split("|",1) + [None])[:2] if "|" in s else (s, None)
         hint_map = {
-            "openai_auth":"Set a valid OPENAI_API_KEY in Render.",
-            "openai_permission":"Model not allowed / quota issue.",
-            "openai_bad_request":"Check MDRAFT_MODEL / response_format; reduce chunk size.",
-            "openai_unprocessable":"Input too long/invalid; shrink chunks or truncate.",
-            "openai_not_found":"Set MDRAFT_MODEL=gpt-4o-mini.",
-            "openai_rate_limit":"Retry later / reduce concurrency.",
-            "openai_connection":"Network/DNS hiccup; retry.",
+            "openai_auth":"Set OPENAI_API_KEY.",
+            "openai_permission":"Model/quota access issue.",
+            "openai_bad_request":"Check MDRAFT_MODEL (gpt-4o-mini) & response_format; shrink chunks.",
+            "openai_unprocessable":"Input too long/invalid; reduce chunk size or truncate.",
+            "openai_not_found":"Wrong model name; use gpt-4o-mini.",
+            "openai_rate_limit":"Retry or reduce concurrency.",
+            "openai_connection":"Network hiccup; retry.",
             "openai_api":"Transient server error; retry.",
-            "json_parse":"Model returned non-JSON; stricter prompt + extractor handles most.",
-            "model_error":"Generic model error; see logs."
+            "json_parse":"Model didn't return a clean array; extractor failed.",
+            "model_error":"Generic model error.",
+            "openai_other":"Unhandled OpenAI error."
         }
         return jsonify({"error": code, "hint": hint_map.get(code), "detail": detail}), 502
     except RuntimeError as re:

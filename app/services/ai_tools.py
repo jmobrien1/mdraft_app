@@ -75,9 +75,6 @@ def _chunk_text(s: str, max_chars: int = 8000) -> list[str]:
     return parts or [""]
 
 
-def _is_array_schema(schema) -> bool:
-    return bool(schema) and schema.get("type") == "array"
-
 def _schema_is_array(schema) -> bool:
     return bool(schema) and schema.get("type") == "array"
 
