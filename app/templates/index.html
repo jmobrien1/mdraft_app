@@ -145,65 +145,121 @@
     }
   }
 
-  async function callFreeTool(endpoint) {
-    if (!window.lastDocumentId) return;
+  // Non-blocking status UI helpers
+  function showStatus(msg, busy = false) {
+    const el = document.getElementById('ai-status');
+    if (!el) return;
+    el.innerHTML = busy ? `<span class="spinner"></span>${msg}` : msg;
+    el.classList.toggle('hidden', !msg);
+  }
+
+  function withBusyButton(btn, busy) {
+    if (!btn) return;
+    btn.classList.toggle('btn-busy', busy);
+    btn.disabled = !!busy;
+    btn.setAttribute('aria-busy', busy ? 'true' : 'false');
+  }
+
+  async function apiPostJSON(url, body) {
+    const headers = {'Content-Type':'application/json'};
+    const k = (localStorage.getItem('apiKey') || '').trim();
+    if (k) headers['X-API-Key'] = k;
     
-    const button = document.getElementById(endpoint);
-    const originalText = button.textContent;
-    button.textContent = '⏳';
-    button.disabled = true;
-    
-    try {
-      const headers = { 'Content-Type': 'application/json' };
-      const k = (localStorage.getItem('apiKey') || '').trim();
-      if (k) headers['X-API-Key'] = k;
-      
-      const res = await fetch(`/api/generate/${endpoint}`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ document_id: window.lastDocumentId })
-      });
-      
-      if (res.ok) {
-        const data = await res.json();
-        window.lastJsonResult = data;
-        freeToolsOutput.textContent = JSON.stringify(data, null, 2);
-        copyJsonBtn.disabled = false;
-        
-        // Handle outline preview
-        if (data.outline_markdown) {
-          outlinePreview.innerHTML = `<h3>Outline Preview</h3><div style="border:1px solid #ddd;padding:.75rem;border-radius:.5rem;background:#fff;">${data.outline_markdown}</div>`;
-        } else {
-          outlinePreview.innerHTML = '';
-        }
-        
-        // Enable CSV download if result is an array of objects
-        downloadCsvBtn.disabled = !Array.isArray(data);
-        toast('Tool completed');
-      } else {
-        const errorData = await res.json().catch(() => ({ error: 'Unknown error' }));
-        freeToolsOutput.textContent = `Error: ${res.status} - ${JSON.stringify(errorData, null, 2)}`;
-        copyJsonBtn.disabled = true;
-        downloadCsvBtn.disabled = true;
-        outlinePreview.innerHTML = '';
-        toast('Tool failed', 2000);
-      }
-    } catch (err) {
-      freeToolsOutput.textContent = `Network error: ${err.message}`;
-      copyJsonBtn.disabled = true;
-      downloadCsvBtn.disabled = true;
-      outlinePreview.innerHTML = '';
-      toast('Network error', 2000);
-    } finally {
-      button.textContent = originalText;
-      button.disabled = false;
+    const r = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body || {})
+    });
+    const text = await r.text();
+    // always try JSON, but don't crash on non-JSON
+    try { 
+      const json = JSON.parse(text); 
+      if (!r.ok) throw { http: r.status, json };
+      return json; 
+    } catch (e) {
+      if (!r.ok) throw { http: r.status, text };
+      // non-JSON success? return raw
+      return text;
     }
   }
 
-  // Attach event listeners to free tool buttons
-  freeToolsButtons.forEach(id => {
-    document.getElementById(id).addEventListener('click', () => callFreeTool(id));
+  async function runTool(btnSelector, url, body, onSuccess) {
+    const btn = document.querySelector(btnSelector);
+    showStatus('Working… this can take ~10–30s depending on RFP size.', true);
+    withBusyButton(btn, true);
+
+    try {
+      const data = await apiPostJSON(url, body);
+      // do not clear editor; hand results to a renderer panel
+      if (typeof onSuccess === 'function') onSuccess(data);
+      showStatus('Done.');
+      setTimeout(() => showStatus('', false), 1600);
+    } catch (err) {
+      console.error('AI tool failed', err);
+      let msg = 'Something went wrong.';
+      if (err.json && err.json.error) {
+        const { error, hint, detail } = err.json;
+        msg = `${error}${hint ? ' — ' + hint : ''}${detail ? ' — ' + detail : ''}`;
+      } else if (err.text) {
+        msg = `${err.http || ''} ${err.text.slice(0,180)}`;
+      }
+      showStatus(msg, false);
+    } finally {
+      withBusyButton(btn, false);
+    }
+  }
+
+  // Wire up buttons with non-blocking approach
+  document.getElementById('compliance-matrix')?.addEventListener('click', () => {
+    const docId = window.lastDocumentId;
+    if (!docId) return;
+    runTool('#compliance-matrix', '/api/generate/compliance-matrix', { document_id: docId }, (data) => {
+      renderJsonToPanel('Compliance Matrix', data);
+    });
   });
+
+  document.getElementById('evaluation-criteria')?.addEventListener('click', () => {
+    const docId = window.lastDocumentId;
+    if (!docId) return;
+    runTool('#evaluation-criteria', '/api/generate/evaluation-criteria', { document_id: docId }, (data) => {
+      renderJsonToPanel('Evaluation Criteria', data);
+    });
+  });
+
+  document.getElementById('annotated-outline')?.addEventListener('click', () => {
+    const docId = window.lastDocumentId;
+    if (!docId) return;
+    runTool('#annotated-outline', '/api/generate/annotated-outline', { document_id: docId }, (data) => {
+      renderJsonToPanel('Annotated Outline', data);
+    });
+  });
+
+  document.getElementById('submission-checklist')?.addEventListener('click', () => {
+    const docId = window.lastDocumentId;
+    if (!docId) return;
+    runTool('#submission-checklist', '/api/generate/submission-checklist', { document_id: docId }, (data) => {
+      renderJsonToPanel('Submission Checklist', data);
+    });
+  });
+
+  // Simple renderer that keeps main text intact
+  function renderJsonToPanel(title, data) {
+    window.lastJsonResult = data;
+    freeToolsOutput.textContent = JSON.stringify(data, null, 2);
+    copyJsonBtn.disabled = false;
+    
+    // Handle outline preview
+    if (data.outline_markdown) {
+      outlinePreview.innerHTML = `<h3>Outline Preview</h3><div style="border:1px solid #ddd;padding:.75rem;border-radius:.5rem;background:#fff;">${data.outline_markdown}</div>`;
+    } else {
+      outlinePreview.innerHTML = '';
+    }
+    
+    // Enable CSV download if result is an array of objects
+    downloadCsvBtn.disabled = !Array.isArray(data);
+  }
+
+  function escapeHtml(s){return s.replace(/[&<>"']/g,m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
 
   // Copy JSON utility
   copyJsonBtn.addEventListener('click', () => {
