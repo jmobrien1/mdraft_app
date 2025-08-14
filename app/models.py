@@ -105,15 +105,17 @@ class Proposal(db.Model):
     __tablename__ = "proposals"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True)
+    visitor_session_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(64), default="active", nullable=False)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     # Relationships
-    user: Mapped[User] = relationship("User")  # type: ignore
+    user: Mapped[Optional[User]] = relationship("User")  # type: ignore
     documents: Mapped[list[ProposalDocument]] = relationship("ProposalDocument", back_populates="proposal", cascade="all, delete-orphan")  # type: ignore
     requirements: Mapped[list[Requirement]] = relationship("Requirement", back_populates="proposal", cascade="all, delete-orphan")  # type: ignore
 

@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 from typing import Any, Dict
 
-from flask import Blueprint, current_app, jsonify, request, send_from_directory, abort
+from flask import Blueprint, current_app, jsonify, request, send_from_directory, abort, make_response
 from sqlalchemy import text
 
 from . import db, limiter
@@ -95,6 +95,45 @@ def dev_check_prompts():
     exists = {f: os.path.exists(os.path.join(base, f)) for f in files}
     flag = (os.getenv("MDRAFT_DEV_STUB") or "").strip()
     return jsonify({"MDRAFT_DEV_STUB": flag, "stub_detected": flag.lower() in {"1","true","yes","on","y"}, "base": base, "exists": exists}), 200
+
+
+@bp.route("/api/session/bootstrap", methods=["GET"])
+def session_bootstrap():
+    """Bootstrap a visitor session for anonymous users.
+    
+    This endpoint ensures every anonymous visitor has a unique session ID
+    stored in a secure cookie. It's safe to call multiple times.
+    
+    Returns:
+        JSON response with session status
+    """
+    from .auth.visitor import get_or_create_visitor_session_id
+    
+    resp = make_response({"ok": True, "session_ready": True})
+    vid, resp = get_or_create_visitor_session_id(resp)
+    
+    return resp, 200
+
+
+@bp.route("/api/me/usage", methods=["GET"])
+def get_usage():
+    """Get usage information for the current user or anonymous visitor.
+    
+    Returns usage statistics and limits for both authenticated and anonymous users.
+    Anonymous users get a minimal usage object with basic limits.
+    
+    Returns:
+        JSON response with usage information
+    """
+    # Since Flask-Login is disabled, we'll return anonymous usage for now
+    # In a real implementation, you'd check for authentication tokens/sessions
+    return jsonify({
+        "plan": "free-anon",
+        "conversions_used": 0,
+        "limit": 1,
+        "can_convert": True,
+        "authenticated": False
+    }), 200
 
 
 @bp.route("/upload", methods=["POST"])

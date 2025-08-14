@@ -120,6 +120,12 @@ def create_app() -> Flask:
     app.config["DOCAI_PROCESSOR_ID"] = ENV.get("DOCAI_PROCESSOR_ID")
     app.config["DOCAI_LOCATION"] = ENV.get("DOCAI_LOCATION", "us")
     
+    # Anonymous proposal configuration
+    app.config["FREE_TOOLS_REQUIRE_AUTH"] = ENV.get("FREE_TOOLS_REQUIRE_AUTH", "false").lower() == "true"
+    app.config["ANON_PROPOSAL_TTL_DAYS"] = int(ENV.get("ANON_PROPOSAL_TTL_DAYS", "14"))
+    app.config["ANON_RATE_LIMIT_PER_MINUTE"] = ENV.get("ANON_RATE_LIMIT_PER_MINUTE", "20")
+    app.config["ANON_RATE_LIMIT_PER_DAY"] = ENV.get("ANON_RATE_LIMIT_PER_DAY", "200")
+    
     # Sentry configuration
     import sentry_sdk
     from sentry_sdk.integrations.flask import FlaskIntegration

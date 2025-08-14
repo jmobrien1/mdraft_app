@@ -144,7 +144,14 @@ def get_usage() -> Any:
         user_id = session.get("user_id")
     
     if not user_id:
-        return jsonify({"error": "unauthorized"}), 401
+        # Anonymous user - return minimal usage object
+        return jsonify({
+            "plan": "free-anon",
+            "conversions_used": 0,
+            "limit": 1,
+            "can_convert": True,
+            "authenticated": False
+        }), 200
     
     # Get usage data with defensive error handling
     try:

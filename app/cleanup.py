@@ -1,252 +1,162 @@
 """
-Cleanup tasks for mdraft.
+Cleanup tasks for the mdraft application.
 
-This module provides cleanup functionality for removing old files
-based on retention policies. It includes both Celery beat tasks
-and CLI commands for manual execution.
+This module provides functions for cleaning up expired data,
+including anonymous proposals that have exceeded their TTL.
 """
-from __future__ import annotations
-
 import logging
-import os
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import Optional
 
 from . import db
-from .models import Job
-from .services import Storage
+from .models import Proposal, ProposalDocument, Requirement
 
 logger = logging.getLogger(__name__)
 
 
-def get_retention_days() -> int:
-    """Get retention days from environment variable.
+def cleanup_expired_anonymous_proposals() -> int:
+    """
+    Clean up anonymous proposals that have expired.
+    
+    This function removes proposals created by anonymous users that have
+    exceeded their TTL (time-to-live) period.
     
     Returns:
-        Number of days to retain files (default: 30)
+        Number of proposals cleaned up
     """
-    retention_str = os.getenv("RETENTION_DAYS", "30")
-    return int(retention_str) if retention_str else 30
-
-
-def should_delete_gcs() -> bool:
-    """Check if GCS deletion is enabled.
-    
-    Returns:
-        True if CLEANUP_DELETE_GCS=1, False otherwise
-    """
-    return os.getenv("CLEANUP_DELETE_GCS", "0") == "1"
-
-
-def should_use_gcs() -> bool:
-    """Check if GCS is enabled.
-    
-    Returns:
-        True if USE_GCS=1, False otherwise
-    """
-    return os.getenv("USE_GCS", "0") == "1"
-
-
-def cleanup_old_files() -> dict:
-    """Clean up old files based on retention policy.
-    
-    This function is idempotent and safe to run multiple times.
-    It will skip cleanup if GCS is not enabled or if deletion is disabled.
-    
-    Returns:
-        Dictionary with cleanup results
-    """
-    logger.info("Starting cleanup of old files")
-    
-    # Check if cleanup should be performed
-    if not should_use_gcs():
-        logger.info("Skipping cleanup: USE_GCS=0")
-        return {
-            "status": "skipped",
-            "reason": "USE_GCS=0",
-            "files_deleted": 0,
-            "errors": []
-        }
-    
-    if not should_delete_gcs():
-        logger.info("Skipping cleanup: CLEANUP_DELETE_GCS=0")
-        return {
-            "status": "skipped", 
-            "reason": "CLEANUP_DELETE_GCS=0",
-            "files_deleted": 0,
-            "errors": []
-        }
-    
-    retention_days = get_retention_days()
-    cutoff_date = datetime.utcnow() - timedelta(days=retention_days)
-    
-    logger.info(f"Cleaning up files older than {cutoff_date} (retention: {retention_days} days)")
-    
-    storage = Storage()
-    files_deleted = 0
-    errors = []
-    
     try:
-        # Clean up outputs directory
-        output_files = storage.list_prefix("outputs/")
-        logger.info(f"Found {len(output_files)} files in outputs/")
+        # Get current time
+        now = datetime.utcnow()
         
-        for file_path in output_files:
-            try:
-                # Extract job ID from path: outputs/<job_id>/result.md
-                path_parts = file_path.split('/')
-                if len(path_parts) >= 2:
-                    job_id_str = path_parts[1]
-                    try:
-                        job_id = int(job_id_str)
-                        
-                        # Check job completion date
-                        job = db.session.get(Job, job_id)
-                        if job and job.completed_at:
-                            if job.completed_at < cutoff_date:
-                                # Delete the file
-                                if storage.delete(file_path):
-                                    files_deleted += 1
-                                    logger.info(f"Deleted old file: {file_path} (job {job_id}, completed {job.completed_at})")
-                                else:
-                                    errors.append(f"Failed to delete file: {file_path}")
-                            else:
-                                logger.debug(f"Keeping file: {file_path} (job {job_id}, completed {job.completed_at})")
-                        else:
-                            logger.warning(f"Job {job_id} not found or has no completion date: {file_path}")
-                            
-                    except ValueError:
-                        logger.warning(f"Invalid job ID in path: {file_path}")
-                else:
-                    logger.warning(f"Invalid file path format: {file_path}")
-                    
-            except Exception as e:
-                error_msg = f"Error processing file {file_path}: {e}"
-                logger.error(error_msg)
-                errors.append(error_msg)
-        
-        # Clean up uploads directory (optional - more aggressive cleanup)
-        upload_files = storage.list_prefix("uploads/")
-        logger.info(f"Found {len(upload_files)} files in uploads/")
-        
-        for file_path in upload_files:
-            try:
-                # Extract job ID from path: uploads/<job_id>/<filename>
-                path_parts = file_path.split('/')
-                if len(path_parts) >= 2:
-                    job_id_str = path_parts[1]
-                    try:
-                        job_id = int(job_id_str)
-                        
-                        # Check job creation date
-                        job = db.session.get(Job, job_id)
-                        if job and job.created_at:
-                            if job.created_at < cutoff_date:
-                                # Delete the file
-                                if storage.delete(file_path):
-                                    files_deleted += 1
-                                    logger.info(f"Deleted old upload: {file_path} (job {job_id}, created {job.created_at})")
-                                else:
-                                    errors.append(f"Failed to delete upload: {file_path}")
-                            else:
-                                logger.debug(f"Keeping upload: {file_path} (job {job_id}, created {job.created_at})")
-                        else:
-                            logger.warning(f"Job {job_id} not found: {file_path}")
-                            
-                    except ValueError:
-                        logger.warning(f"Invalid job ID in path: {file_path}")
-                else:
-                    logger.warning(f"Invalid file path format: {file_path}")
-                    
-            except Exception as e:
-                error_msg = f"Error processing upload {file_path}: {e}"
-                logger.error(error_msg)
-                errors.append(error_msg)
-        
-        logger.info(f"Cleanup completed: {files_deleted} files deleted, {len(errors)} errors")
-        
-        return {
-            "status": "completed",
-            "files_deleted": files_deleted,
-            "errors": errors,
-            "retention_days": retention_days,
-            "cutoff_date": cutoff_date.isoformat()
-        }
-        
-    except Exception as e:
-        error_msg = f"Cleanup failed: {e}"
-        logger.error(error_msg)
-        return {
-            "status": "failed",
-            "error": error_msg,
-            "files_deleted": files_deleted,
-            "errors": errors
-        }
-
-
-def cleanup_old_jobs() -> dict:
-    """Clean up old job records from database.
-    
-    This function removes job records older than retention period
-    that are in terminal states (completed, failed).
-    
-    Returns:
-        Dictionary with cleanup results
-    """
-    logger.info("Starting cleanup of old job records")
-    
-    retention_days = get_retention_days()
-    cutoff_date = datetime.utcnow() - timedelta(days=retention_days)
-    
-    try:
-        # Delete old completed/failed jobs
-        old_jobs = db.session.query(Job).filter(
-            Job.status.in_(['completed', 'failed']),
-            Job.created_at < cutoff_date
+        # Find expired anonymous proposals
+        expired_proposals = Proposal.query.filter(
+            Proposal.visitor_session_id.isnot(None),
+            Proposal.expires_at.isnot(None),
+            Proposal.expires_at < now
         ).all()
         
-        job_count = len(old_jobs)
-        if job_count > 0:
-            for job in old_jobs:
-                db.session.delete(job)
-            db.session.commit()
-            logger.info(f"Deleted {job_count} old job records")
-        else:
-            logger.info("No old job records to delete")
-            db.session.commit()  # Commit even when no jobs to delete
+        cleanup_count = 0
         
-        return {
-            "status": "completed",
-            "jobs_deleted": job_count,
-            "retention_days": retention_days,
-            "cutoff_date": cutoff_date.isoformat()
-        }
+        for proposal in expired_proposals:
+            try:
+                # Delete associated documents and requirements (cascade)
+                logger.info(f"Cleaning up expired anonymous proposal {proposal.id} ({proposal.name})")
+                
+                # The cascade delete should handle documents and requirements
+                db.session.delete(proposal)
+                cleanup_count += 1
+                
+            except Exception as e:
+                logger.error(f"Failed to cleanup proposal {proposal.id}: {e}")
+                continue
+        
+        if cleanup_count > 0:
+            db.session.commit()
+            logger.info(f"Cleaned up {cleanup_count} expired anonymous proposals")
+        
+        return cleanup_count
         
     except Exception as e:
+        logger.error(f"Failed to cleanup expired anonymous proposals: {e}")
         db.session.rollback()
-        error_msg = f"Job cleanup failed: {e}"
-        logger.error(error_msg)
-        return {
-            "status": "failed",
-            "error": error_msg
-        }
+        return 0
 
 
-def run_cleanup() -> dict:
-    """Run complete cleanup process.
+def cleanup_orphaned_documents() -> int:
+    """
+    Clean up orphaned proposal documents.
     
-    This function runs both file cleanup and job record cleanup.
+    This function removes documents that are not associated with any proposal.
     
     Returns:
-        Dictionary with combined cleanup results
+        Number of documents cleaned up
     """
-    logger.info("Starting complete cleanup process")
+    try:
+        # Find orphaned documents
+        orphaned_docs = ProposalDocument.query.filter(
+            ~ProposalDocument.proposal_id.in_(
+                db.session.query(Proposal.id)
+            )
+        ).all()
+        
+        cleanup_count = 0
+        
+        for doc in orphaned_docs:
+            try:
+                logger.info(f"Cleaning up orphaned document {doc.id} ({doc.filename})")
+                db.session.delete(doc)
+                cleanup_count += 1
+                
+            except Exception as e:
+                logger.error(f"Failed to cleanup document {doc.id}: {e}")
+                continue
+        
+        if cleanup_count > 0:
+            db.session.commit()
+            logger.info(f"Cleaned up {cleanup_count} orphaned documents")
+        
+        return cleanup_count
+        
+    except Exception as e:
+        logger.error(f"Failed to cleanup orphaned documents: {e}")
+        db.session.rollback()
+        return 0
+
+
+def cleanup_orphaned_requirements() -> int:
+    """
+    Clean up orphaned requirements.
     
-    file_results = cleanup_old_files()
-    job_results = cleanup_old_jobs()
+    This function removes requirements that are not associated with any proposal.
     
-    return {
-        "file_cleanup": file_results,
-        "job_cleanup": job_results,
+    Returns:
+        Number of requirements cleaned up
+    """
+    try:
+        # Find orphaned requirements
+        orphaned_reqs = Requirement.query.filter(
+            ~Requirement.proposal_id.in_(
+                db.session.query(Proposal.id)
+            )
+        ).all()
+        
+        cleanup_count = 0
+        
+        for req in orphaned_reqs:
+            try:
+                logger.info(f"Cleaning up orphaned requirement {req.id} ({req.requirement_id})")
+                db.session.delete(req)
+                cleanup_count += 1
+                
+            except Exception as e:
+                logger.error(f"Failed to cleanup requirement {req.id}: {e}")
+                continue
+        
+        if cleanup_count > 0:
+            db.session.commit()
+            logger.info(f"Cleaned up {cleanup_count} orphaned requirements")
+        
+        return cleanup_count
+        
+    except Exception as e:
+        logger.error(f"Failed to cleanup orphaned requirements: {e}")
+        db.session.rollback()
+        return 0
+
+
+def run_cleanup_tasks() -> dict:
+    """
+    Run all cleanup tasks.
+    
+    Returns:
+        Dictionary with cleanup results
+    """
+    results = {
+        "expired_proposals": cleanup_expired_anonymous_proposals(),
+        "orphaned_documents": cleanup_orphaned_documents(),
+        "orphaned_requirements": cleanup_orphaned_requirements(),
         "timestamp": datetime.utcnow().isoformat()
     }
+    
+    logger.info(f"Cleanup completed: {results}")
+    return results

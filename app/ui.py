@@ -6,7 +6,7 @@ This module contains the main UI routes for the web interface.
 from __future__ import annotations
 
 from typing import Any
-from flask import Blueprint, render_template, request, jsonify, current_app
+from flask import Blueprint, render_template, request, jsonify, current_app, make_response
 from flask_login import login_required, current_user
 
 from . import db
@@ -41,11 +41,22 @@ def proposals() -> Any:
 
 
 @bp.route("/api/proposals")
-@login_required
 def get_proposals() -> Any:
-    """Get proposals for the current user."""
+    """Get proposals for the current user or anonymous visitor."""
     try:
-        proposals = Proposal.query.filter_by(user_id=current_user.id).order_by(Proposal.created_at.desc()).all()
+        from .auth.ownership import get_owner_filter
+        from .auth.visitor import get_or_create_visitor_session_id
+        
+        # Ensure visitor session exists for anonymous users
+        if not getattr(current_user, "is_authenticated", False):
+            resp = make_response()
+            vid, resp = get_or_create_visitor_session_id(resp)
+        
+        # Get filter conditions for current owner
+        owner_filter = get_owner_filter()
+        
+        # Query proposals with owner filter
+        proposals = Proposal.query.filter_by(**owner_filter).order_by(Proposal.created_at.desc()).all()
         
         result = []
         for proposal in proposals:
@@ -61,10 +72,19 @@ def get_proposals() -> Any:
                 "status": proposal.status,
                 "document_count": doc_count,
                 "requirement_count": req_count,
-                "created_at": proposal.created_at.isoformat()
+                "created_at": proposal.created_at.isoformat(),
+                "is_anonymous": proposal.visitor_session_id is not None
             })
         
-        return jsonify({"proposals": result}), 200
+        response = jsonify({"proposals": result})
+        
+        # Set visitor session cookie if needed
+        if not getattr(current_user, "is_authenticated", False):
+            resp = make_response(response)
+            vid, resp = get_or_create_visitor_session_id(resp)
+            return resp, 200
+        
+        return response, 200
         
     except Exception as e:
         current_app.logger.error(f"Failed to get proposals: {e}")
