@@ -17,3 +17,30 @@ export function dragAndDrop(fileInput, dropEl){
   ["dragleave","drop"].forEach(e=>dropEl.addEventListener(e, ()=>dropEl.classList.remove("dragover")));
   dropEl.addEventListener("drop", (e)=>{ const dt=e.dataTransfer; if(dt?.files?.length){ fileInput.files = dt.files; fileInput.dispatchEvent(new Event("change")); }});
 }
+
+// API fetch guard to handle JSON errors gracefully
+export async function api(url, init = {}) {
+  const res = await fetch(url, {
+    ...init,
+    headers: { 'Accept': 'application/json', ...(init.headers || {}) }
+  });
+
+  const ctype = res.headers.get('content-type') || '';
+  const isJSON = ctype.includes('application/json');
+
+  if (!res.ok) {
+    // Try to parse JSON error; fallback to text
+    if (isJSON) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || body.error || `Request failed (${res.status})`);
+    } else {
+      const text = await res.text().catch(() => '');
+      throw new Error(text || `Request failed (${res.status})`);
+    }
+  }
+
+  return isJSON ? res.json() : (await res.text());
+}
+
+// Make api function globally available for templates
+window.api = api;

@@ -10,6 +10,8 @@ services:
     envVars:
       - key: FLASK_ENV
         value: production
+      - key: FLASK_APP
+        value: run.py
       - key: SECRET_KEY
         generateValue: true
       - key: FLASK_LIMITER_STORAGE_URI
@@ -42,6 +44,8 @@ services:
     runtime: python-3.11.11
     startCommand: python -m scripts.migration_doctor && celery -A celery_worker.celery worker --loglevel=info --pool=threads --concurrency=4 --without-gossip --without-mingle
     envVars:
+      - key: FLASK_APP
+        value: run.py
       - key: CELERY_BROKER_URL
         sync: false
       - key: CELERY_RESULT_BACKEND

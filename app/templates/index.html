@@ -165,21 +165,14 @@
     const k = (localStorage.getItem('apiKey') || '').trim();
     if (k) headers['X-API-Key'] = k;
     
-    const r = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body || {})
-    });
-    const text = await r.text();
-    // always try JSON, but don't crash on non-JSON
-    try { 
-      const json = JSON.parse(text); 
-      if (!r.ok) throw { http: r.status, json };
-      return json; 
-    } catch (e) {
-      if (!r.ok) throw { http: r.status, text };
-      // non-JSON success? return raw
-      return text;
+    try {
+      return await api(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body || {})
+      });
+    } catch (error) {
+      throw { http: 500, text: error.message };
     }
   }
 
@@ -315,8 +308,7 @@
       const headers = {};
       const k = (localStorage.getItem('apiKey') || '').trim();
       if (k) headers['X-API-Key'] = k;
-      const res = await fetch('/api/convert', { method: 'POST', body: fd, headers });
-      const json = await res.json();
+      const json = await api('/api/convert', { method: 'POST', body: fd, headers });
       
       // Log upload response for debugging
       console.log('[mdraft] upload response:', json);
@@ -339,12 +331,10 @@
       if (res.status === 202 && data.status === "QUEUED"){
         statusEl.textContent = 'Queued…';
         const poll = async ()=>{
-          const r = await fetch(data.links.self);
-          const j = await r.json();
+          const j = await api(data.links.self);
           if (j.status === "COMPLETED"){
             statusEl.textContent = "Completed";
-            const mres = await fetch(j.links.markdown);
-            out.value = await mres.text();   // <-- always load markdown text
+            out.value = await api(j.links.markdown);   // <-- always load markdown text
             
             // Log completion response and handle document ID robustly
             console.log('[mdraft] completion response:', j);
@@ -368,8 +358,7 @@
         if (data.markdown) {
           out.value = data.markdown;
         } else if (data.links && data.links.markdown) {
-          const mres = await fetch(data.links.markdown);  // <-- fetch when only a link is returned
-          out.value = await mres.text();
+          out.value = await api(data.links.markdown);  // <-- fetch when only a link is returned
         } else {
           out.value = ""; // nothing? keep empty
         }
@@ -399,14 +388,7 @@
 // Load recent conversions (global so other scripts/HTML can call it)
 window.loadRecent = async function loadRecent() {
   try {
-    const res = await fetch('/api/conversions?limit=10', { headers: { 'Accept': 'application/json' }});
-    const ct = (res.headers.get('content-type') || '').toLowerCase();
-    if (!res.ok || !ct.includes('application/json')) {
-      const _txt = await res.text();
-      console.warn('recent conversions not JSON', res.status, ct);
-      return;
-    }
-    const data = await res.json();
+    const data = await api('/api/conversions?limit=10', { headers: { 'Accept': 'application/json' }});
     // ⬇️ keep the existing DOM rendering for the recent list here, unchanged
     const el = document.getElementById('recent');
     el.innerHTML = '';
@@ -477,7 +459,7 @@ window.loadRecent && window.loadRecent();
     try {
       const fd = new FormData();
       fd.append('file', file, file.name);
-      const res = await fetch('/api/estimate', {
+      const res = await api('/api/estimate', {
         method: 'POST',
         body: fd,
         headers: { 'Accept': 'application/json' },

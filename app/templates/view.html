@@ -20,7 +20,7 @@
       <script>
         async function poll(){
           try{
-            const r = await fetch("/api/conversions/{{ id }}"); const j = await r.json();
+            const j = await api("/api/conversions/{{ id }}");
             if (j.status === "COMPLETED") location.reload(); else setTimeout(poll, 1200);
           }catch{ setTimeout(poll, 1600); }
         } poll();

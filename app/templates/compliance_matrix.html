@@ -476,9 +476,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
 async function loadProposalInfo() {
   try {
-    const response = await fetch(`/api/agents/compliance-matrix/proposals/${currentProposalId}/requirements`);
-    if (response.ok) {
-      const data = await response.json();
+    const data = await api(`/api/agents/compliance-matrix/proposals/${currentProposalId}/requirements`);
       document.getElementById('proposal-name').textContent = `Compliance Matrix - ${data.proposal_id}`;
       document.getElementById('proposal-description').textContent = `${data.total_requirements} requirements found`;
     }
@@ -489,9 +487,7 @@ async function loadProposalInfo() {
 
 async function loadRequirements() {
   try {
-    const response = await fetch(`/api/agents/compliance-matrix/proposals/${currentProposalId}/requirements`);
-    if (response.ok) {
-      const data = await response.json();
+    const data = await api(`/api/agents/compliance-matrix/proposals/${currentProposalId}/requirements`);
       currentRequirements = data.requirements;
       filteredRequirements = [...currentRequirements];
       renderRequirements();
@@ -596,7 +592,7 @@ function changePage(delta) {
 
 async function updateRequirement(requirementId, field, value) {
   try {
-    const response = await fetch(`/api/agents/compliance-matrix/requirements/${requirementId}`, {
+    const response = await api(`/api/agents/compliance-matrix/requirements/${requirementId}`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
@@ -648,7 +644,7 @@ async function saveRequirement() {
   const notes = document.getElementById('edit-notes').value;
 
   try {
-    const response = await fetch(`/api/agents/compliance-matrix/requirements/${editingRequirementId}`, {
+    const response = await api(`/api/agents/compliance-matrix/requirements/${editingRequirementId}`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
@@ -686,7 +682,7 @@ async function runComplianceAgent() {
   try {
     showMessage('Running compliance matrix agent...', 'success');
     
-    const response = await fetch('/api/agents/compliance-matrix/run', {
+    const response = await api('/api/agents/compliance-matrix/run', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -715,7 +711,7 @@ async function runComplianceAgent() {
 async function exportMatrix(format) {
   try {
     const url = `/api/agents/compliance-matrix/proposals/${currentProposalId}/export?format=${format}`;
-    const response = await fetch(url);
+    const response = await api(url);
     
     if (response.ok) {
       const blob = await response.blob();

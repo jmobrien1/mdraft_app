@@ -361,9 +361,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
 async function loadProposals() {
   try {
-    const response = await fetch('/api/proposals');
-    if (response.ok) {
-      const data = await response.json();
+    const data = await api('/api/proposals');
       proposals = data.proposals;
       renderProposals();
     } else {
@@ -451,7 +449,7 @@ async function createProposal(event) {
   };
   
   try {
-    const response = await fetch('/api/agents/compliance-matrix/proposals', {
+    const response = await api('/api/agents/compliance-matrix/proposals', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -488,7 +486,7 @@ async function runAgent(proposalId) {
   try {
     showMessage('Running compliance matrix agent...', 'success');
     
-    const response = await fetch('/api/agents/compliance-matrix/run', {
+    const response = await api('/api/agents/compliance-matrix/run', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

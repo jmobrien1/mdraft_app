@@ -282,6 +282,9 @@ def create_app() -> Flask:
     from .api.ops import ops as ops_bp
     app.register_blueprint(ops_bp)
     
+    from .api.errors import api_errors
+    app.register_blueprint(api_errors)
+    
     from .cli import register_cli
     register_cli(app)
     
