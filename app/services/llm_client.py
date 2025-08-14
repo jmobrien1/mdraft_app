@@ -33,20 +33,22 @@ def _raise(code: str, err: BaseException):
     msg = (msg or "").replace("\n", " ")[:200]
     raise RuntimeError(f"{code}|{msg}")
 
-def chat_json(messages: List[Dict[str, str]], response_json_hint: bool = True, model: str | None = None) -> str:
+def chat_json(messages, response_json_hint=True, model=None, max_tokens=700):
     client = _get_client()
     mdl = (model or os.getenv("MDRAFT_MODEL") or "gpt-4o-mini").strip()
-    params: Dict[str, Any] = {
-        "model": mdl,
-        "messages": messages,
-        "temperature": 0.2,
-        "max_tokens": 2000,
-    }
-    if response_json_hint:
-        params["response_format"] = {"type": "json_object"}
+    params = dict(model=mdl, messages=messages, temperature=0.2, max_tokens=max_tokens)
 
     try:
-        resp = client.chat.completions.create(**params)
+        if response_json_hint:
+            try:
+                params_rf = dict(params, response_format={"type": "json_object"})
+                resp = client.chat.completions.create(**params_rf)
+            except TypeError as e:
+                LOG.warning("response_format unsupported; retrying without it: %s", e)
+                resp = client.chat.completions.create(**params)
+        else:
+            resp = client.chat.completions.create(**params)
+
         return resp.choices[0].message.content or ""
     except AuthenticationError as e:
         LOG.exception("openai_auth: %s", e); _raise("openai_auth", e)
@@ -65,4 +67,6 @@ def chat_json(messages: List[Dict[str, str]], response_json_hint: bool = True, m
     except APIError as e:
         LOG.exception("openai_api: %s", e); _raise("openai_api", e)
     except Exception as e:
-        LOG.exception("openai_other: %s", e); _raise("openai_other", e)
+        LOG.exception("openai_other: %s", e)
+        msg = (str(e) or "unknown").replace("\n"," ")[:200]
+        raise RuntimeError(f"openai_other|{msg}")

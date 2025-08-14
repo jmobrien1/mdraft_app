@@ -306,31 +306,27 @@ def get_conversion_markdown(id):
 @bp.get("/conversions")
 @limiter.limit(os.getenv("LIST_RATE_LIMIT", "240 per minute"))
 def list_conversions():
+    from flask import request, jsonify, current_app, g
     try:
-        limit = int(request.args.get("limit", 10))
-        offset = int(request.args.get("offset", 0))
-    except ValueError:
-        return jsonify(error="limit/offset must be integers"), 400
-    limit = max(1, min(limit, 100))
-    offset = max(0, offset)
+        limit = max(1, min(int(request.args.get("limit", 10)), 50))
+        public = bool(os.getenv("MDRAFT_PUBLIC_MODE"))
+        user = getattr(g, "user", None)
 
-    try:
-        # if you normally filter by current_user, gate by PUBLIC
-        q = Conversion.query.order_by(Conversion.created_at.desc()).offset(offset).limit(limit).all()
-        items = []
-        for c in q:
-            items.append({
-                "id": c.id,
-                "filename": c.filename,
-                "status": c.status,
-                "created_at": (c.created_at.replace(tzinfo=timezone.utc).isoformat() if c.created_at else None),
-                "links": {
-                    "self": f"/api/conversions/{c.id}",
-                    "markdown": f"/api/conversions/{c.id}/markdown",
-                    "view": f"/v/{c.id}",
-                }
-            })
-        return jsonify(items=items, limit=limit, offset=offset), 200
+        if user:
+            q = Conversion.query.filter_by(user_id=user.id).order_by(Conversion.created_at.desc()).limit(limit)
+        elif public:
+            # public beta: last N conversions (non-sensitive fields)
+            q = Conversion.query.order_by(Conversion.created_at.desc()).limit(limit)
+        else:
+            return jsonify([]), 200
+
+        items = [{
+            "id": c.id,
+            "filename": c.filename,
+            "created_at": c.created_at.isoformat() if c.created_at else None,
+            "size_bytes": getattr(c, "size_bytes", None),
+        } for c in q.all()]
+        return jsonify(items), 200
     except Exception as e:
-        current_app.logger.exception("list_conversions failed: %s", e)
-        return jsonify([]), 200  # fail-soft for list
+        current_app.logger.exception("/api/conversions failed")
+        return jsonify({"error":"conversions_failed","detail":str(e)[:200]}), 500

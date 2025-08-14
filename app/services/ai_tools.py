@@ -16,6 +16,13 @@ except Exception:  # pragma: no cover
 
 LOG = logging.getLogger(__name__)
 
+# ---- limits from env with safe defaults ----
+CHUNK_SIZE_CHARS = int(os.getenv("MDRAFT_CHUNK_SIZE_CHARS") or 3000)  # conservative
+MAX_CHUNKS = int(os.getenv("MDRAFT_MAX_CHUNKS") or 12)                # hard stop
+TRUNCATE_CHARS = int(os.getenv("MDRAFT_TRUNCATE_CHARS") or 200_000)   # pre-truncate big docs
+MAX_MERGED_ITEMS = int(os.getenv("MDRAFT_MAX_MERGED_ITEMS") or 300)   # cap list growth
+DEFAULT_MODEL_MAX_TOKENS = int(os.getenv("MDRAFT_MAX_TOKENS") or 700) # arrays don't need a lot
+
 DEV_TRUE = {"1", "true", "yes", "on", "y"}
 
 DEFAULT_PROMPTS = {
@@ -62,17 +69,10 @@ def _normalize_stem(p: str) -> str:
     return re.sub(r'[^a-z0-9]+', '_', os.path.basename(p).lower())
 
 
-def _chunk_text(s: str, max_chars: int = 8000) -> list[str]:
-    # split on paragraph boundaries; never exceed max_chars
-    parts, cur, total = [], [], 0
-    for line in s.splitlines(True):
-        ln = len(line)
-        if total + ln > max_chars and cur:
-            parts.append("".join(cur))
-            cur, total = [], 0
-        cur.append(line); total += ln
-    if cur: parts.append("".join(cur))
-    return parts or [""]
+def _chunk_text(s: str, max_chars: int):
+    s = s or ""
+    for i in range(0, len(s), max_chars):
+        yield s[i:i+max_chars]
 
 
 def _schema_is_array(schema) -> bool:
@@ -317,7 +317,7 @@ def _load_prompt_text(prompt_path: str) -> str:
         raise
 
 
-def run_prompt(prompt_path: str, rfp_text: str, json_schema: Optional[Dict[str, Any]]) -> Any:
+def run_prompt(prompt_path: str, rfp_text: str, json_schema: Optional[Dict[str, Any]], model_name: str | None = None) -> Any:
     """
     Primary entry point used by the /api/generate/* endpoints.
 
@@ -331,6 +331,7 @@ def run_prompt(prompt_path: str, rfp_text: str, json_schema: Optional[Dict[str, 
         prompt_path: absolute or repo-relative path to the text prompt
         rfp_text: the extracted text of the solicitation
         json_schema: a jsonschema dict defining required fields/types; can be None
+        model_name: optional model name override
 
     Returns:
         Parsed Python object (list/dict) that matches json_schema if provided.
@@ -352,140 +353,63 @@ def run_prompt(prompt_path: str, rfp_text: str, json_schema: Optional[Dict[str, 
         LOG.exception("Failed to read prompt file: %s", e)
         raise ValueError("model_error")
 
-    # After reading prompt_text, compute:
-    stem = _normalize_stem(prompt_path)
-    model_name = os.getenv("MDRAFT_MODEL") or "gpt-4o-mini"
-    chunks = _chunk_text(rfp_text, max_chars=4000)
-    LOG.info("run_prompt: model=%s stem=%s chunks=%d len0=%d", model_name, stem, len(chunks), len(chunks[0]) if chunks else 0)
+    # ---- truncate big docs before anything else ----
+    if rfp_text and len(rfp_text) > TRUNCATE_CHARS:
+        LOG.info("run_prompt: truncating input from %d -> %d chars", len(rfp_text), TRUNCATE_CHARS)
+        rfp_text = rfp_text[:TRUNCATE_CHARS]
 
-    is_array = _schema_is_array(json_schema)
+    is_array = _schema_is_array(json_schema or {})
     use_json_object_format = bool(json_schema) and not is_array
-    LOG.info("run_prompt: stem=%s is_array=%s json_object_format=%s",
-             stem, is_array, use_json_object_format)
 
-    def _call_chunk(i, ch):
-        # Build messages per-chunk WITHOUT inserting the entire doc anywhere
+    merged = [] if is_array else None
+    chunks_used = 0
+
+    for chunk in _chunk_text(rfp_text, CHUNK_SIZE_CHARS):
+        chunks_used += 1
+        if chunks_used > MAX_CHUNKS:
+            LOG.warning("run_prompt: reached MAX_CHUNKS=%d; stopping early", MAX_CHUNKS)
+            break
+
         messages = [
-            {"role":"system","content":"You are a specialized proposal assistant. Respond with VALID JSON ONLY. No prose."},
-            {"role":"user","content": f"{prompt_text}\n\n---\nRFP_CHUNK {i+1}/{len(chunks)}\nBEGIN_CHUNK\n{ch}\nEND_CHUNK"}
+            {"role": "system", "content": prompt_text},
+            {"role": "user", "content": chunk},
         ]
+        # arrays: keep tokens small
+        max_tokens = DEFAULT_MODEL_MAX_TOKENS if is_array else 1200
+
         try:
-            raw = chat_json(messages, response_json_hint=use_json_object_format, model=model_name)
-            return raw
+            raw = chat_json(messages, response_json_hint=use_json_object_format, model=model_name, max_tokens=max_tokens)
         except RuntimeError as re:
             # re.args[0] like 'openai_bad_request|<msg>'
             raise ValueError(str(re))
 
-    def _process_chunks() -> Any:
-        partials = []
-        for i, ch in enumerate(chunks):
-            # Log exactly what's being sent to the model
-            LOG.info("chunk %d/%d len=%d stem=%s", i+1, len(chunks), len(ch), stem)
-            raw = _call_chunk(i, ch)
+        if is_array:
             try:
-                if is_array:
-                    parsed = _extract_first_json_array(raw)
-                else:
-                    parsed = json.loads(raw)
+                part = _extract_first_json_array(raw)
+                merged.extend(part)
+                if len(merged) >= MAX_MERGED_ITEMS:
+                    LOG.warning("run_prompt: reached MAX_MERGED_ITEMS=%d; stopping early", MAX_MERGED_ITEMS)
+                    merged = merged[:MAX_MERGED_ITEMS]
+                    break
             except Exception as e:
-                LOG.warning("JSON parse fail on chunk %d: %s; first 200 chars: %r", i, e, (raw or "")[:200])
+                LOG.warning("JSON parse fail on chunk %d: %s; first 200 chars: %r", chunks_used, e, (raw or "")[:200])
                 raise ValueError("json_parse")
-            _validate_with_schema(parsed, json_schema)
-            partials.append(parsed)
-
-        # Merge partials:
-        if _schema_is_array(json_schema):
-            if "compliance_matrix" in stem:
-                key_candidates = ["requirement_id","requirement_text"]
-            elif "evaluation_criteria" in stem:
-                key_candidates = ["criterion"]
-            elif "submission_checklist" in stem:
-                key_candidates = ["item"]
-            else:
-                key_candidates = []
-            merged = _merge_arrays(partials, key_candidates)
         else:
-            merged = _merge_outline(partials)
+            # object – later chunks can refine; keep last valid
+            try:
+                merged = json.loads(raw)
+            except Exception:
+                raise ValueError(f"json_parse|object_parse_failed")
 
-        # Normalize evaluation criteria
-        if "evaluation_criteria" in stem:
-            merged = _normalize_eval_criteria(merged)
+    # normalize criteria list
+    stem = os.path.basename(prompt_path).replace("-", "_")
+    if is_array and "evaluation_criteria" in stem:
+        merged = _normalize_eval_criteria(merged)
 
+    # optional: validate against schema here (if you have it)
+    if json_schema:
         _validate_with_schema(merged, json_schema)
-        LOG.info("merged_ok stem=%s size=%s", stem, (len(merged) if isinstance(merged, list) else len(merged.get('annotations',[]))))
-        return merged
-
-    # First attempt
-    try:
-        return _process_chunks()
-    except JsonSchemaValidationError as ve:
-        LOG.warning("run_prompt: schema fail; retrying once with correction stem=%s", stem)
-        # Retry once with a correction hint
-        correction = (
-            "\n\nIMPORTANT: Your previous response did not match the required JSON schema. "
-            "Return VALID JSON ONLY that matches exactly. No prose."
-        )
-        try:
-            # Update user message with correction hint
-            def _call_chunk_with_correction(i, ch):
-                # Build messages per-chunk WITHOUT inserting the entire doc anywhere
-                messages = [
-                    {"role":"system","content":"You are a specialized proposal assistant. Respond with VALID JSON ONLY. No prose."},
-                    {"role":"user","content": f"{prompt_text}\n\n---\nRFP_CHUNK {i+1}/{len(chunks)}\nBEGIN_CHUNK\n{ch}\nEND_CHUNK{correction}"}
-                ]
-                try:
-                    raw = chat_json(messages, response_json_hint=use_json_object_format, model=model_name)
-                    return raw
-                except RuntimeError as re:
-                    # re.args[0] like 'openai_bad_request|<msg>'
-                    raise ValueError(str(re))
-
-            partials = []
-            for i, ch in enumerate(chunks):
-                # Log exactly what's being sent to the model (retry)
-                LOG.info("chunk %d/%d len=%d stem=%s (retry)", i+1, len(chunks), len(ch), stem)
-                raw = _call_chunk_with_correction(i, ch)
-                try:
-                    if is_array:
-                        parsed = _extract_first_json_array(raw)
-                    else:
-                        parsed = json.loads(raw)
-                except Exception as e:
-                    LOG.warning("JSON parse fail on chunk %d: %s; first 200 chars: %r", i, e, (raw or "")[:200])
-                    raise ValueError("json_parse")
-                _validate_with_schema(parsed, json_schema)
-                partials.append(parsed)
-
-            # Merge:
-            if _schema_is_array(json_schema):
-                if "compliance_matrix" in stem:
-                    key_candidates = ["requirement_id","requirement_text"]
-                elif "evaluation_criteria" in stem:
-                    key_candidates = ["criterion"]
-                elif "submission_checklist" in stem:
-                    key_candidates = ["item"]
-                else:
-                    key_candidates = []
-                merged = _merge_arrays(partials, key_candidates)
-            else:
-                merged = _merge_outline(partials)
-
-            # Normalize evaluation criteria
-            if "evaluation_criteria" in stem:
-                merged = _normalize_eval_criteria(merged)
-
-            _validate_with_schema(merged, json_schema)
-            LOG.info("merged_ok stem=%s size=%s", stem, (len(merged) if isinstance(merged, list) else len(merged.get('annotations',[]))))
-            return merged
-        except Exception as e:
-            LOG.exception("Second attempt failed: %s", e)
-            # Re-raise the original error if it's a ValueError with specific code
-            if isinstance(e, ValueError):
-                raise
-            raise ValueError("openai_other")
-    except Exception as e:
-        LOG.exception("Model invocation failed: %s", e)
-        # Re-raise the original error if it's a ValueError with specific code
-        if isinstance(e, ValueError):
-            raise
-        raise ValueError("openai_other")
+    
+    LOG.info("run_prompt: completed stem=%s chunks=%d items=%s", 
+             stem, chunks_used, len(merged) if isinstance(merged, list) else "object")
+    return merged

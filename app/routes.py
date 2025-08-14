@@ -313,20 +313,20 @@ def generate_compliance_matrix() -> Any:
     except ValueError as ve:
         s = str(ve) or "model_error"
         code, detail = (s.split("|",1) + [None])[:2] if "|" in s else (s, None)
-        hint_map = {
+        hints = {
             "openai_auth":"Set OPENAI_API_KEY.",
             "openai_permission":"Model/quota access issue.",
-            "openai_bad_request":"Use MDRAFT_MODEL=gpt-4o-mini; avoid forcing object for arrays.",
-            "openai_unprocessable":"Input too long/invalid; reduce chunk size or truncate.",
-            "openai_not_found":"Wrong model name; set gpt-4o-mini.",
-            "openai_rate_limit":"Retry or reduce concurrency.",
+            "openai_bad_request":"Check MDRAFT_MODEL (gpt-4o-mini) & JSON mode.",
+            "openai_unprocessable":"Input too long; reduce CHUNK_SIZE or TRUNCATE_CHARS.",
+            "openai_not_found":"Use MDRAFT_MODEL=gpt-4o-mini.",
+            "openai_rate_limit":"Retry / reduce concurrency.",
             "openai_connection":"Network hiccup; retry.",
             "openai_api":"Transient server error; retry.",
-            "json_parse":"Model didn't return a clean array; extractor failed.",
+            "json_parse":"Model didn't return clean JSON; extractor failed.",
             "model_error":"Generic model error.",
             "openai_other":"Unhandled OpenAI error."
         }
-        return jsonify({"error": code, "hint": hint_map.get(code), "detail": detail}), 502
+        return jsonify({"error": code, "hint": hints.get(code), "detail": detail}), 502
     except RuntimeError as re:
         # pass-through from llm_client
         code = str(re)
@@ -372,20 +372,20 @@ def generate_evaluation_criteria() -> Any:
     except ValueError as ve:
         s = str(ve) or "model_error"
         code, detail = (s.split("|",1) + [None])[:2] if "|" in s else (s, None)
-        hint_map = {
+        hints = {
             "openai_auth":"Set OPENAI_API_KEY.",
             "openai_permission":"Model/quota access issue.",
-            "openai_bad_request":"Use MDRAFT_MODEL=gpt-4o-mini; avoid forcing object for arrays.",
-            "openai_unprocessable":"Input too long/invalid; reduce chunk size or truncate.",
-            "openai_not_found":"Wrong model name; set gpt-4o-mini.",
-            "openai_rate_limit":"Retry or reduce concurrency.",
+            "openai_bad_request":"Check MDRAFT_MODEL (gpt-4o-mini) & JSON mode.",
+            "openai_unprocessable":"Input too long; reduce CHUNK_SIZE or TRUNCATE_CHARS.",
+            "openai_not_found":"Use MDRAFT_MODEL=gpt-4o-mini.",
+            "openai_rate_limit":"Retry / reduce concurrency.",
             "openai_connection":"Network hiccup; retry.",
             "openai_api":"Transient server error; retry.",
-            "json_parse":"Model didn't return a clean array; extractor failed.",
+            "json_parse":"Model didn't return clean JSON; extractor failed.",
             "model_error":"Generic model error.",
             "openai_other":"Unhandled OpenAI error."
         }
-        return jsonify({"error": code, "hint": hint_map.get(code), "detail": detail}), 502
+        return jsonify({"error": code, "hint": hints.get(code), "detail": detail}), 502
     except RuntimeError as re:
         # pass-through from llm_client
         code = str(re)
@@ -430,20 +430,20 @@ def generate_annotated_outline() -> Any:
     except ValueError as ve:
         s = str(ve) or "model_error"
         code, detail = (s.split("|",1) + [None])[:2] if "|" in s else (s, None)
-        hint_map = {
+        hints = {
             "openai_auth":"Set OPENAI_API_KEY.",
             "openai_permission":"Model/quota access issue.",
-            "openai_bad_request":"Use MDRAFT_MODEL=gpt-4o-mini; avoid forcing object for arrays.",
-            "openai_unprocessable":"Input too long/invalid; reduce chunk size or truncate.",
-            "openai_not_found":"Wrong model name; set gpt-4o-mini.",
-            "openai_rate_limit":"Retry or reduce concurrency.",
+            "openai_bad_request":"Check MDRAFT_MODEL (gpt-4o-mini) & JSON mode.",
+            "openai_unprocessable":"Input too long; reduce CHUNK_SIZE or TRUNCATE_CHARS.",
+            "openai_not_found":"Use MDRAFT_MODEL=gpt-4o-mini.",
+            "openai_rate_limit":"Retry / reduce concurrency.",
             "openai_connection":"Network hiccup; retry.",
             "openai_api":"Transient server error; retry.",
-            "json_parse":"Model didn't return a clean array; extractor failed.",
+            "json_parse":"Model didn't return clean JSON; extractor failed.",
             "model_error":"Generic model error.",
             "openai_other":"Unhandled OpenAI error."
         }
-        return jsonify({"error": code, "hint": hint_map.get(code), "detail": detail}), 502
+        return jsonify({"error": code, "hint": hints.get(code), "detail": detail}), 502
     except RuntimeError as re:
         # pass-through from llm_client
         code = str(re)
@@ -488,20 +488,20 @@ def generate_submission_checklist() -> Any:
     except ValueError as ve:
         s = str(ve) or "model_error"
         code, detail = (s.split("|",1) + [None])[:2] if "|" in s else (s, None)
-        hint_map = {
+        hints = {
             "openai_auth":"Set OPENAI_API_KEY.",
             "openai_permission":"Model/quota access issue.",
-            "openai_bad_request":"Use MDRAFT_MODEL=gpt-4o-mini; avoid forcing object for arrays.",
-            "openai_unprocessable":"Input too long/invalid; reduce chunk size or truncate.",
-            "openai_not_found":"Wrong model name; set gpt-4o-mini.",
-            "openai_rate_limit":"Retry or reduce concurrency.",
+            "openai_bad_request":"Check MDRAFT_MODEL (gpt-4o-mini) & JSON mode.",
+            "openai_unprocessable":"Input too long; reduce CHUNK_SIZE or TRUNCATE_CHARS.",
+            "openai_not_found":"Use MDRAFT_MODEL=gpt-4o-mini.",
+            "openai_rate_limit":"Retry / reduce concurrency.",
             "openai_connection":"Network hiccup; retry.",
             "openai_api":"Transient server error; retry.",
-            "json_parse":"Model didn't return a clean array; extractor failed.",
+            "json_parse":"Model didn't return clean JSON; extractor failed.",
             "model_error":"Generic model error.",
             "openai_other":"Unhandled OpenAI error."
         }
-        return jsonify({"error": code, "hint": hint_map.get(code), "detail": detail}), 502
+        return jsonify({"error": code, "hint": hints.get(code), "detail": detail}), 502
     except RuntimeError as re:
         # pass-through from llm_client
         code = str(re)
@@ -581,8 +581,8 @@ def dev_gen_smoke():
         payload = run_prompt(prompt_path, rfp, schema)
         return jsonify(payload), 200
     except Exception as e:
-        current_app.logger.exception("dev_gen_smoke failed: %s", e)
-        return jsonify({"error":"dev_gen_smoke_failed", "detail": str(e)}), 502
+        current_app.logger.exception("dev_gen_smoke failed")
+        return jsonify({"error":"dev_gen_smoke_failed","detail":str(e)[:200]}), 502
 
 
 @bp.get("/api/dev/selftest")
