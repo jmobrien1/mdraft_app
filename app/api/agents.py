@@ -19,6 +19,7 @@ from ..models import Proposal, ProposalDocument, Requirement, User
 from ..services.rfp_data_layer import RFPDataLayer
 from ..agents.compliance_agent import ComplianceAgent
 from ..conversion import process_job
+from ..auth.utils import get_request_user_id_or_none
 
 
 bp = Blueprint("agents", __name__, url_prefix="/api/agents")
@@ -61,8 +62,13 @@ def run_compliance_matrix_agent() -> Any:
         target_sections = data.get("target_sections", ["C"])
         force_reprocess = data.get("force_reprocess", False)
         
+        # Get user ID safely (handles anonymous users)
+        user_id = get_request_user_id_or_none()
+        if not user_id:
+            return jsonify({"error": "Authentication required for this endpoint"}), 401
+        
         # Validate proposal exists and user has access
-        proposal = Proposal.query.filter_by(id=proposal_id, user_id=current_user.id).first()
+        proposal = Proposal.query.filter_by(id=proposal_id, user_id=user_id).first()
         if not proposal:
             return jsonify({"error": "Proposal not found or access denied"}), 404
         
@@ -127,10 +133,15 @@ def create_proposal() -> Any:
         
         description = data.get("description")
         
+        # Get user ID safely
+        user_id = get_request_user_id_or_none()
+        if not user_id:
+            return jsonify({"error": "Authentication required for this endpoint"}), 401
+        
         # Create proposal
         rfp_data_layer = RFPDataLayer()
         proposal = rfp_data_layer.create_proposal(
-            user_id=current_user.id,
+            user_id=user_id,
             name=name,
             description=description
         )
@@ -175,7 +186,12 @@ def list_proposals() -> Any:
     try:
         status = request.args.get("status")
         
-        query = Proposal.query.filter_by(user_id=current_user.id)
+        # Get user ID safely
+        user_id = get_request_user_id_or_none()
+        if not user_id:
+            return jsonify({"error": "Authentication required for this endpoint"}), 401
+        
+        query = Proposal.query.filter_by(user_id=user_id)
         if status:
             query = query.filter_by(status=status)
         
@@ -225,8 +241,13 @@ def add_document_to_proposal(proposal_id: int) -> Any:
     }
     """
     try:
+        # Get user ID safely
+        user_id = get_request_user_id_or_none()
+        if not user_id:
+            return jsonify({"error": "Authentication required for this endpoint"}), 401
+        
         # Validate proposal exists and user has access
-        proposal = Proposal.query.filter_by(id=proposal_id, user_id=current_user.id).first()
+        proposal = Proposal.query.filter_by(id=proposal_id, user_id=user_id).first()
         if not proposal:
             return jsonify({"error": "Proposal not found or access denied"}), 404
         
@@ -260,7 +281,7 @@ def add_document_to_proposal(proposal_id: int) -> Any:
         # Create job for processing
         from ..models import Job
         job = Job(
-            user_id=current_user.id,
+            user_id=user_id,
             filename=filename,
             status="queued",
             gcs_uri=gcs_uri or filename
@@ -327,8 +348,13 @@ def get_proposal_requirements(proposal_id: int) -> Any:
     }
     """
     try:
+        # Get user ID safely
+        user_id = get_request_user_id_or_none()
+        if not user_id:
+            return jsonify({"error": "Authentication required for this endpoint"}), 401
+        
         # Validate proposal exists and user has access
-        proposal = Proposal.query.filter_by(id=proposal_id, user_id=current_user.id).first()
+        proposal = Proposal.query.filter_by(id=proposal_id, user_id=user_id).first()
         if not proposal:
             return jsonify({"error": "Proposal not found or access denied"}), 404
         
@@ -402,8 +428,13 @@ def update_requirement(requirement_id: str) -> Any:
         if not proposal_id:
             return jsonify({"error": "proposal_id is required"}), 400
         
+        # Get user ID safely
+        user_id = get_request_user_id_or_none()
+        if not user_id:
+            return jsonify({"error": "Authentication required for this endpoint"}), 401
+        
         # Validate proposal exists and user has access
-        proposal = Proposal.query.filter_by(id=proposal_id, user_id=current_user.id).first()
+        proposal = Proposal.query.filter_by(id=proposal_id, user_id=user_id).first()
         if not proposal:
             return jsonify({"error": "Proposal not found or access denied"}), 404
         
@@ -446,8 +477,13 @@ def export_compliance_matrix(proposal_id: int) -> Any:
     - PDF: File download
     """
     try:
+        # Get user ID safely
+        user_id = get_request_user_id_or_none()
+        if not user_id:
+            return jsonify({"error": "Authentication required for this endpoint"}), 401
+        
         # Validate proposal exists and user has access
-        proposal = Proposal.query.filter_by(id=proposal_id, user_id=current_user.id).first()
+        proposal = Proposal.query.filter_by(id=proposal_id, user_id=user_id).first()
         if not proposal:
             return jsonify({"error": "Proposal not found or access denied"}), 404
         

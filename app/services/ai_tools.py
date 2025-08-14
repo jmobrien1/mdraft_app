@@ -6,6 +6,8 @@ import json
 import logging
 from typing import Any, Dict, List, Optional
 from app.services.llm_client import chat_json
+from app.schemas.free_capabilities import normalize_compliance_matrix
+from app.ai.json_utils import safe_json_parse
 
 try:
     from jsonschema import validate as json_validate  # type: ignore
@@ -18,11 +20,15 @@ LOG = logging.getLogger(__name__)
 
 # ---- limits from env with safe defaults ----
 CHUNK_SIZE_CHARS = int(os.getenv("MDRAFT_CHUNK_SIZE_CHARS") or 3000)  # conservative
-MAX_CHUNKS = int(os.getenv("MDRAFT_MAX_CHUNKS") or 12)                # hard stop
+MAX_CHUNKS = int(os.getenv("MDRAFT_MAX_CHUNKS") or 12)                # hard stop (legacy, now window size)
 TRUNCATE_CHARS = int(os.getenv("MDRAFT_TRUNCATE_CHARS") or 200_000)   # pre-truncate big docs
 MAX_MERGED_ITEMS = int(os.getenv("MDRAFT_MAX_MERGED_ITEMS") or 300)   # cap list growth
 DEFAULT_MODEL_MAX_TOKENS = int(os.getenv("MDRAFT_MAX_TOKENS") or 700) # arrays don't need a lot
 RELAX_MAX_OBJS_PER_CHUNK = int(os.getenv("MDRAFT_RELAX_MAX_OBJS_PER_CHUNK") or 80)
+
+# New chunking configuration for processing entire documents
+MATRIX_WINDOW_SIZE = int(os.getenv("MATRIX_WINDOW_SIZE") or 12)  # chunks per window
+MATRIX_MAX_TOTAL_CHUNKS = int(os.getenv("MATRIX_MAX_TOTAL_CHUNKS") or 500)  # total chunks to process
 
 DEV_TRUE = {"1", "true", "yes", "on", "y"}
 
@@ -68,6 +74,39 @@ def _bool_env(name: str) -> bool:
 
 def _normalize_stem(p: str) -> str:
     return re.sub(r'[^a-z0-9]+', '_', os.path.basename(p).lower())
+
+
+def _deduplicate_requirements(requirements: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Deduplicate requirements based on requirement_text and rfp_reference.
+    
+    This prevents duplicate requirements from different chunks while preserving
+    the most complete information.
+    """
+    if not requirements:
+        return requirements
+    
+    # Create a stable key for deduplication
+    seen = {}
+    deduplicated = []
+    
+    for req in requirements:
+        if not isinstance(req, dict):
+            continue
+            
+        # Create a stable key from requirement text and reference
+        text = req.get("requirement_text", "").strip()
+        ref = req.get("rfp_reference", "").strip()
+        key = f"{text}|{ref}"
+        
+        if key not in seen:
+            seen[key] = True
+            deduplicated.append(req)
+        else:
+            LOG.debug("deduplicate: skipping duplicate requirement: %s", key[:100])
+    
+    LOG.info("deduplicate: reduced %d -> %d requirements", len(requirements), len(deduplicated))
+    return deduplicated
 
 
 def _chunk_text(s: str, max_chars: int):
@@ -391,12 +430,27 @@ def run_prompt(prompt_path: str, rfp_text: str, json_schema: Optional[Dict[str, 
 
     merged = [] if is_array else None
     chunks_used = 0
-
-    for chunk in _chunk_text(rfp_text, CHUNK_SIZE_CHARS):
-        chunks_used += 1
-        if chunks_used > MAX_CHUNKS:
-            LOG.warning("run_prompt: reached MAX_CHUNKS=%d; stopping early", MAX_CHUNKS)
-            break
+    
+    # Get all chunks first for pagination
+    all_chunks = list(_chunk_text(rfp_text, CHUNK_SIZE_CHARS))
+    total_chunks = len(all_chunks)
+    
+    # Determine window size and total limit
+    window_size = MATRIX_WINDOW_SIZE if "compliance_matrix" in os.path.basename(prompt_path) else MAX_CHUNKS
+    max_total_chunks = MATRIX_MAX_TOTAL_CHUNKS if "compliance_matrix" in os.path.basename(prompt_path) else MAX_CHUNKS
+    
+    LOG.info("run_prompt: processing %d chunks in windows of %d (max total: %d)", 
+             total_chunks, window_size, max_total_chunks)
+    
+    # Process chunks in windows
+    for window_start in range(0, min(total_chunks, max_total_chunks), window_size):
+        window_end = min(window_start + window_size, total_chunks, max_total_chunks)
+        window_chunks = all_chunks[window_start:window_end]
+        
+        LOG.info("run_prompt: processing window %d-%d of %d", window_start + 1, window_end, total_chunks)
+        
+        for chunk in window_chunks:
+            chunks_used += 1
 
         messages = [
             {"role": "system", "content": prompt_text},
@@ -413,12 +467,24 @@ def run_prompt(prompt_path: str, rfp_text: str, json_schema: Optional[Dict[str, 
 
         if is_array:
             try:
-                part = _extract_first_json_array(raw)
+                # Use robust JSON parsing with repair
+                schema_name = "compliance_matrix" if "compliance_matrix" in os.path.basename(prompt_path) else "array"
+                part = safe_json_parse(raw, schema_name)
+                if isinstance(part, list):
+                    merged.extend(part)
+                else:
+                    LOG.warning("Expected array but got: %s", type(part))
+            except ValueError as ve:
+                # Convert ValueError to proper error format for route handling
+                error_msg = str(ve)
+                if "JSON parsing failed" in error_msg:
+                    raise ValueError(f"json_parse|{error_msg}")
+                else:
+                    raise ValueError(f"validation_error|{error_msg}")
             except Exception as ex:
-                LOG.warning("array parse failed (strict); trying relaxed: %s", str(ex))
-                part = _extract_relaxed_array(raw)
-            if part:
-                merged.extend(part)
+                LOG.warning("array parse failed: %s", str(ex))
+                raise ValueError(f"json_parse|unexpected_error:{str(ex)}")
+                
             if len(merged) >= MAX_MERGED_ITEMS:
                 LOG.warning("run_prompt: reached MAX_MERGED_ITEMS=%d; stopping early", MAX_MERGED_ITEMS)
                 merged = merged[:MAX_MERGED_ITEMS]
@@ -426,7 +492,14 @@ def run_prompt(prompt_path: str, rfp_text: str, json_schema: Optional[Dict[str, 
         else:
             # object – later chunks can refine; keep last valid
             try:
-                merged = json.loads(raw)
+                schema_name = "object"
+                merged = safe_json_parse(raw, schema_name)
+            except ValueError as ve:
+                error_msg = str(ve)
+                if "JSON parsing failed" in error_msg:
+                    raise ValueError(f"json_parse|{error_msg}")
+                else:
+                    raise ValueError(f"validation_error|{error_msg}")
             except Exception:
                 raise ValueError(f"json_parse|object_parse_failed")
 
@@ -434,6 +507,12 @@ def run_prompt(prompt_path: str, rfp_text: str, json_schema: Optional[Dict[str, 
     stem = os.path.basename(prompt_path).replace("-", "_")
     if is_array and "evaluation_criteria" in stem:
         merged = _normalize_eval_criteria(merged)
+    
+    # normalize compliance matrix requirements
+    if is_array and "compliance_matrix" in stem:
+        merged = normalize_compliance_matrix(merged)
+        # Deduplicate requirements after normalization
+        merged = _deduplicate_requirements(merged)
 
     # optional: validate against schema here (if you have it)
     if json_schema:

@@ -137,8 +137,8 @@ def get_usage() -> Any:
     user_id = None
     
     try:
-        if current_user.is_authenticated:
-            user_id = current_user.id
+        if getattr(current_user, "is_authenticated", False):
+            user_id = getattr(current_user, "id", None)
     except Exception:
         # Flask-Login not available or error, try session fallback
         user_id = session.get("user_id")

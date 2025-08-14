@@ -313,6 +313,15 @@ def generate_compliance_matrix() -> Any:
     except ValueError as ve:
         s = str(ve) or "model_error"
         code, detail = (s.split("|",1) + [None])[:2] if "|" in s else (s, None)
+        
+        # Handle validation errors with 422 status
+        if code == "validation_error":
+            return jsonify({
+                "error": "validation_failed", 
+                "details": detail,
+                "message": "AI response failed validation"
+            }), 422
+        
         hints = {
             "openai_auth":"Set OPENAI_API_KEY.",
             "openai_permission":"Model/quota access issue.",
