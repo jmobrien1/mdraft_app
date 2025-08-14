@@ -34,48 +34,26 @@ def migration_status():
             current_app.logger.warning(f"Could not read current alembic version: {e}")
             current = None
 
-        # Quick schema probe for required columns
-        proposals_has_visitor_session_id = False
-        try:
-            probe = db.session.execute(text("""
-                SELECT COUNT(*) FROM information_schema.columns
-                 WHERE table_name='proposals' AND column_name='visitor_session_id'
-            """)).scalar()
-            proposals_has_visitor_session_id = bool(probe == 1)
-        except Exception as e:
-            current_app.logger.warning(f"Could not probe proposals schema: {e}")
-
-        # Check conversions table too
-        conversions_has_ownership = False
-        try:
-            probe = db.session.execute(text("""
-                SELECT COUNT(*) FROM information_schema.columns
-                 WHERE table_name='conversions' AND column_name='user_id'
-            """)).scalar()
-            conversions_has_ownership = bool(probe == 1)
-        except Exception as e:
-            current_app.logger.warning(f"Could not probe conversions schema: {e}")
+        # Check required columns as specified in requirements
+        checks = {}
+        for table, col in [("proposals", "visitor_session_id"), ("conversions", "proposal_id")]:
+            try:
+                cnt = db.session.execute(text("""
+                    SELECT COUNT(*) FROM information_schema.columns
+                    WHERE table_name=:t AND column_name=:c
+                """), {"t": table, "c": col}).scalar()
+                checks[f"{table}.{col}"] = (cnt == 1)
+            except Exception as e:
+                current_app.logger.warning(f"Could not probe {table}.{col}: {e}")
+                checks[f"{table}.{col}"] = False
 
         # Determine overall migration status
-        migrated = (
-            proposals_has_visitor_session_id and 
-            conversions_has_ownership and
-            current is not None and
-            head is not None and
-            current == head
-        )
+        migrated = all(checks.values()) and current is not None and head is not None and current == head
 
         return jsonify({
             "migrated": migrated,
-            "alembic": {
-                "current": current,
-                "head": head,
-                "at_head": current == head if current and head else False
-            },
-            "schema": {
-                "proposals_has_visitor_session_id": proposals_has_visitor_session_id,
-                "conversions_has_ownership": conversions_has_ownership
-            }
+            "alembic_current": current,
+            "checks": checks
         })
     except Exception as e:
         current_app.logger.error(f"Migration status check failed: {e}")

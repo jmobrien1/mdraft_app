@@ -4,8 +4,8 @@ services:
     env: python
     buildCommand: pip install -r requirements.txt
     runtime: python-3.11.11
-    preDeployCommand: bash scripts/predeploy.sh
-    startCommand: python -m scripts.migration_doctor && gunicorn --bind 0.0.0.0:$PORT --workers 2 --threads 8 --timeout 120 wsgi:app
+    preDeployCommand: bash scripts/migration_sentry.sh
+    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 2 --threads 8 --timeout 120 wsgi:app
     healthCheckPath: /health
     envVars:
       - key: FLASK_ENV
@@ -42,7 +42,8 @@ services:
     env: python
     buildCommand: pip install -r requirements.txt
     runtime: python-3.11.11
-    startCommand: python -m scripts.migration_doctor && celery -A celery_worker.celery worker --loglevel=info --pool=threads --concurrency=4 --without-gossip --without-mingle
+    preDeployCommand: bash scripts/migration_sentry.sh
+    startCommand: celery -A celery_worker.celery worker --loglevel=info --pool=threads --concurrency=4 --without-gossip --without-mingle
     envVars:
       - key: FLASK_APP
         value: run.py
