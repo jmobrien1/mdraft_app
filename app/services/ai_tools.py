@@ -270,13 +270,9 @@ def run_prompt(prompt_path: str, rfp_text: str, json_schema: Optional[Dict[str, 
         try:
             raw = chat_json(messages, response_json_hint=bool(json_schema), model=model_name)
             return raw
-        except RuntimeError as e:
-            # Map RuntimeError codes to ValueError codes
-            error_code = str(e)
-            if error_code in ["openai_auth", "openai_rate_limit", "openai_timeout", "openai_other"]:
-                raise ValueError(error_code)
-            else:
-                raise ValueError("openai_other")
+        except RuntimeError as re:
+            # re is one of: openai_auth, openai_bad_request, openai_rate_limit, openai_connection, openai_api, openai_other
+            raise ValueError(str(re))
 
     def _process_chunks() -> Any:
         partials = []
@@ -331,13 +327,9 @@ def run_prompt(prompt_path: str, rfp_text: str, json_schema: Optional[Dict[str, 
                 try:
                     raw = chat_json(messages, response_json_hint=bool(json_schema), model=model_name)
                     return raw
-                except RuntimeError as e:
-                    # Map RuntimeError codes to ValueError codes
-                    error_code = str(e)
-                    if error_code in ["openai_auth", "openai_rate_limit", "openai_timeout", "openai_other"]:
-                        raise ValueError(error_code)
-                    else:
-                        raise ValueError("openai_other")
+                except RuntimeError as re:
+                    # re is one of: openai_auth, openai_bad_request, openai_rate_limit, openai_connection, openai_api, openai_other
+                    raise ValueError(str(re))
 
             partials = []
             for i, ch in enumerate(chunks):

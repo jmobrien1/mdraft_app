@@ -290,15 +290,22 @@ def generate_compliance_matrix() -> Any:
         return jsonify(payload), 200
     except ValueError as ve:
         code = str(ve) or "model_error"
-        current_app.logger.exception("gen_compliance_matrix failed: %s", code)
+        # keep backward compat for old ValueError("model_error")
         hint_map = {
-           "openai_auth":"Set OPENAI_API_KEY on Render",
-           "openai_rate_limit":"Retry later / reduce concurrency",
-           "openai_timeout":"Increase MDRAFT_TIMEOUT_SEC or reduce chunk size",
-           "json_parse":"Model returned non-JSON; tighten prompt or lower chunk size",
-           "openai_other":"See server logs",
+            "openai_auth": "Set a valid OPENAI_API_KEY in Render",
+            "openai_bad_request": "Check MDRAFT_MODEL and response_format support; lower chunk size",
+            "openai_rate_limit": "Retry later or lower concurrency",
+            "openai_connection": "Render outbound network/DNS issue; retry",
+            "openai_api": "Transient server error; retry",
+            "json_parse": "Model returned non-JSON; tighten prompt or reduce chunk size",
+            "model_error": "Generic model error; see server logs",
+            "openai_other": "Unhandled OpenAI error; see server logs",
         }
         return jsonify({"error": code, "hint": hint_map.get(code)}), 502
+    except RuntimeError as re:
+        # pass-through from llm_client
+        code = str(re)
+        return jsonify({"error": code}), 502
     except Exception as e:
         current_app.logger.exception("server_error on compliance-matrix: %s", e)
         return jsonify({"error": "server_error"}), 500
@@ -333,15 +340,22 @@ def generate_evaluation_criteria() -> Any:
         return jsonify(payload), 200
     except ValueError as ve:
         code = str(ve) or "model_error"
-        current_app.logger.exception("gen_evaluation_criteria failed: %s", code)
+        # keep backward compat for old ValueError("model_error")
         hint_map = {
-           "openai_auth":"Set OPENAI_API_KEY on Render",
-           "openai_rate_limit":"Retry later / reduce concurrency",
-           "openai_timeout":"Increase MDRAFT_TIMEOUT_SEC or reduce chunk size",
-           "json_parse":"Model returned non-JSON; tighten prompt or lower chunk size",
-           "openai_other":"See server logs",
+            "openai_auth": "Set a valid OPENAI_API_KEY in Render",
+            "openai_bad_request": "Check MDRAFT_MODEL and response_format support; lower chunk size",
+            "openai_rate_limit": "Retry later or lower concurrency",
+            "openai_connection": "Render outbound network/DNS issue; retry",
+            "openai_api": "Transient server error; retry",
+            "json_parse": "Model returned non-JSON; tighten prompt or reduce chunk size",
+            "model_error": "Generic model error; see server logs",
+            "openai_other": "Unhandled OpenAI error; see server logs",
         }
         return jsonify({"error": code, "hint": hint_map.get(code)}), 502
+    except RuntimeError as re:
+        # pass-through from llm_client
+        code = str(re)
+        return jsonify({"error": code}), 502
     except Exception as e:
         current_app.logger.exception("server_error on evaluation-criteria: %s", e)
         return jsonify({"error": "server_error"}), 500
@@ -375,15 +389,22 @@ def generate_annotated_outline() -> Any:
         return jsonify(payload), 200
     except ValueError as ve:
         code = str(ve) or "model_error"
-        current_app.logger.exception("gen_annotated_outline failed: %s", code)
+        # keep backward compat for old ValueError("model_error")
         hint_map = {
-           "openai_auth":"Set OPENAI_API_KEY on Render",
-           "openai_rate_limit":"Retry later / reduce concurrency",
-           "openai_timeout":"Increase MDRAFT_TIMEOUT_SEC or reduce chunk size",
-           "json_parse":"Model returned non-JSON; tighten prompt or lower chunk size",
-           "openai_other":"See server logs",
+            "openai_auth": "Set a valid OPENAI_API_KEY in Render",
+            "openai_bad_request": "Check MDRAFT_MODEL and response_format support; lower chunk size",
+            "openai_rate_limit": "Retry later or lower concurrency",
+            "openai_connection": "Render outbound network/DNS issue; retry",
+            "openai_api": "Transient server error; retry",
+            "json_parse": "Model returned non-JSON; tighten prompt or reduce chunk size",
+            "model_error": "Generic model error; see server logs",
+            "openai_other": "Unhandled OpenAI error; see server logs",
         }
         return jsonify({"error": code, "hint": hint_map.get(code)}), 502
+    except RuntimeError as re:
+        # pass-through from llm_client
+        code = str(re)
+        return jsonify({"error": code}), 502
     except Exception as e:
         current_app.logger.exception("server_error on annotated-outline: %s", e)
         return jsonify({"error": "server_error"}), 500
@@ -417,15 +438,22 @@ def generate_submission_checklist() -> Any:
         return jsonify(payload), 200
     except ValueError as ve:
         code = str(ve) or "model_error"
-        current_app.logger.exception("gen_submission_checklist failed: %s", code)
+        # keep backward compat for old ValueError("model_error")
         hint_map = {
-           "openai_auth":"Set OPENAI_API_KEY on Render",
-           "openai_rate_limit":"Retry later / reduce concurrency",
-           "openai_timeout":"Increase MDRAFT_TIMEOUT_SEC or reduce chunk size",
-           "json_parse":"Model returned non-JSON; tighten prompt or lower chunk size",
-           "openai_other":"See server logs",
+            "openai_auth": "Set a valid OPENAI_API_KEY in Render",
+            "openai_bad_request": "Check MDRAFT_MODEL and response_format support; lower chunk size",
+            "openai_rate_limit": "Retry later or lower concurrency",
+            "openai_connection": "Render outbound network/DNS issue; retry",
+            "openai_api": "Transient server error; retry",
+            "json_parse": "Model returned non-JSON; tighten prompt or reduce chunk size",
+            "model_error": "Generic model error; see server logs",
+            "openai_other": "Unhandled OpenAI error; see server logs",
         }
         return jsonify({"error": code, "hint": hint_map.get(code)}), 502
+    except RuntimeError as re:
+        # pass-through from llm_client
+        code = str(re)
+        return jsonify({"error": code}), 502
     except Exception as e:
         current_app.logger.exception("server_error on submission-checklist: %s", e)
         return jsonify({"error": "server_error"}), 500
@@ -441,9 +469,28 @@ def dev_openai_ping():
         ]
         raw = chat_json(msg, response_json_hint=True)
         return current_app.response_class(raw, mimetype="application/json"), 200
+    except RuntimeError as re:
+        # pass-through from llm_client
+        code = str(re)
+        return jsonify({"error": code}), 502
     except Exception as e:
         current_app.logger.exception("openai-ping failed: %s", e)
         return jsonify({"error":"openai_ping_failed"}), 502
+
+
+@bp.get("/api/dev/openai-ping-detailed")
+def dev_openai_ping_detailed():
+    from app.services.llm_client import chat_json
+    try:
+        msg = [
+            {"role":"system","content":"Return strictly JSON."},
+            {"role":"user","content":"{\"ping\": true, \"model\": \"echo\"}"}
+        ]
+        raw = chat_json(msg, response_json_hint=True)
+        return current_app.response_class(raw, mimetype="application/json"), 200
+    except RuntimeError as re:
+        # return the code to the client to avoid tailing logs
+        return jsonify({"error": str(re)}), 502
 
 
 @bp.get("/api/dev/selftest")
@@ -471,6 +518,8 @@ def dev_selftest():
             response_json_hint=True
         )
         ok["openai"] = {"ok": True, "sample": raw[:60]}
+    except RuntimeError as re:
+        ok["openai"] = {"ok": False, "error": str(re)}
     except Exception as e:
         ok["openai"] = {"ok": False, "error": str(e)}
     return jsonify(ok), 200
