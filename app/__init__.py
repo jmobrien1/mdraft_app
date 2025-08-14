@@ -202,6 +202,21 @@ def create_app() -> Flask:
         pass
     # --- end auth disable ---
 
+    # Configure logging with stdout stream handler (avoid duplicates)
+    level = (os.getenv("LOG_LEVEL") or "INFO").upper()
+    app.logger.setLevel(level)
+
+    has_stream = any(isinstance(h, logging.StreamHandler) for h in app.logger.handlers)
+    if not has_stream:
+        sh = logging.StreamHandler()   # stdout on Render
+        sh.setLevel(level)
+        fmt = logging.Formatter('%(asctime)s %(levelname)s %(name)s: %(message)s')
+        sh.setFormatter(fmt)
+        app.logger.addHandler(sh)
+
+    # optional: avoid duplicate propagation to root
+    app.logger.propagate = False
+
     # Set up structured logging when not in debug mode.  In debug mode
     # Flask's built-in debugger provides human-readable logs.
     if not app.debug:
@@ -269,7 +284,7 @@ def create_app() -> Flask:
 
     # Add global error handler for comprehensive logging
     from flask import request, jsonify, render_template
-    import traceback, uuid, logging
+    import traceback, uuid
     log = logging.getLogger(__name__)
 
     @app.errorhandler(Exception)
