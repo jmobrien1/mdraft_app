@@ -83,53 +83,52 @@ def _schema_is_array(schema) -> bool:
 
 
 def _extract_first_json_array(s: str):
-    # fallback when the model adds stray text
-    import json, re
+    # try strict first
     try:
         j = json.loads(s)
         if isinstance(j, list):
             return j
     except Exception:
         pass
+    # fallback: scan first [...] block
+    import re
     m = re.search(r'\[[\s\S]*\]', s)
-    if m:
-        try:
-            j = json.loads(m.group(0))
-            if isinstance(j, list):
-                return j
-        except Exception:
-            pass
-    raise ValueError("json_parse|could_not_extract_array")
+    if not m:
+        raise ValueError("json_parse|could_not_extract_array")
+    try:
+        j = json.loads(m.group(0))
+        if isinstance(j, list):
+            return j
+    except Exception:
+        pass
+    raise ValueError("json_parse|malformed_array")
 
 
 def _normalize_eval_criteria(arr):
-    norm = []
+    out = []
     for it in arr:
         if not isinstance(it, dict): 
             continue
         crit = (it.get("criterion") or "").strip()
-        desc = it.get("description") or ""
-        basis = it.get("basis") or None
+        if not crit: 
+            continue
         w = it.get("weight", None)
-        # coerce "40%" -> 40  and "40"->40
         if isinstance(w, str):
             ws = w.strip().replace("%","")
             try: w = float(ws)
             except: w = None
-        if isinstance(w, int) or isinstance(w, float):
-            pass
-        elif w is None:
-            pass
+        elif isinstance(w, (int, float)):
+            w = float(w)
         else:
             w = None
-        norm.append({
+        out.append({
             "criterion": crit,
-            "description": desc,
+            "description": it.get("description") or "",
             "weight": w,
-            "basis": basis,
-            "source_section": it.get("source_section") or it.get("rfp_reference") or None
+            "basis": it.get("basis") or None,
+            "source_section": it.get("source_section") or it.get("rfp_reference") or None,
         })
-    return [x for x in norm if x["criterion"]]
+    return out
 
 
 def _merge_arrays(items: list[list[dict]], key_candidates: list[str]) -> list[dict]:
