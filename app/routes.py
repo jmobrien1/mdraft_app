@@ -71,6 +71,16 @@ def dev_diag():
     return jsonify({"MDRAFT_DEV_STUB": flag, "stub_detected": flag.lower() in {"1","true","yes","on","y"}}), 200
 
 
+@bp.get("/api/dev/check-prompts")
+def dev_check_prompts():
+    import os
+    base = os.path.join(current_app.root_path, "prompts", "free_tier")
+    files = ["compliance-matrix.txt","evaluation-criteria.txt","annotated-outline.txt","submission-checklist.txt"]
+    exist = {f: os.path.exists(os.path.join(base, f)) for f in files}
+    flag = (os.getenv("MDRAFT_DEV_STUB") or "").strip()
+    return jsonify({"MDRAFT_DEV_STUB": flag, "stub_detected": flag.lower() in {"1","true","yes","on","y"}, "base": base, "exists": exist}), 200
+
+
 @bp.route("/upload", methods=["POST"])
 @limiter.limit(os.getenv("CONVERT_RATE_LIMIT_DEFAULT", "20 per minute"))
 def upload() -> Any:
@@ -286,6 +296,7 @@ def generate_compliance_matrix() -> Any:
 
 
 @bp.route("/api/generate/evaluation-criteria", methods=["POST"])
+@bp.route("/api/generate/evaluation_criteria", methods=["POST"])
 @limiter.limit(os.getenv("AI_RATE_LIMIT_DEFAULT", "10 per minute"))
 def generate_evaluation_criteria() -> Any:
     """Generate evaluation criteria from RFP document."""

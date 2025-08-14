@@ -31,8 +31,8 @@ def _dev_stub(prompt_path: str, json_schema: Optional[Dict[str, Any]] = None) ->
     Return deterministic, schema-valid sample payloads for the four free tools.
     This lets the UI work end-to-end without a live model.
     """
-    stem = _normalize_stem(prompt_path)
-    LOG.info("DEV STUB HIT prompt_path=%r stem=%r", prompt_path, stem)
+    stem = re.sub(r'[^a-z0-9]+', '_', os.path.basename(prompt_path).lower())
+    LOG.info("DEV STUB HIT: %s => %s", prompt_path, stem)
 
     if stem == "compliance_matrix":
         return [
@@ -140,9 +140,18 @@ def _dev_stub(prompt_path: str, json_schema: Optional[Dict[str, Any]] = None) ->
     if json_schema:
         schema_type = json_schema.get("type")
         if schema_type == "array":
-            return []
+            payload = []
         elif "outline_markdown" in json_schema.get("properties", {}):
-            return {"outline_markdown": "", "annotations": []}
+            payload = {"outline_markdown": "", "annotations": []}
+        else:
+            payload = []
+        
+        # Validate payload if schema was provided
+        try:
+            _validate_with_schema(payload, json_schema)
+            return payload
+        except Exception:
+            raise ValueError("model_error")
     
     # Default fallback: empty array
     return []
