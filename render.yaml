@@ -5,7 +5,7 @@ services:
     buildCommand: pip install -r requirements.txt
     runtime: python-3.11.11
     preDeployCommand: bash scripts/predeploy.sh
-    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 2 --threads 8 --timeout 120 wsgi:app
+    startCommand: python -m scripts.schema_guard && gunicorn --bind 0.0.0.0:$PORT --workers 2 --threads 8 --timeout 120 wsgi:app
     healthCheckPath: /health
     envVars:
       - key: FLASK_ENV
@@ -40,7 +40,7 @@ services:
     env: python
     buildCommand: pip install -r requirements.txt
     runtime: python-3.11.11
-    startCommand: celery -A celery_worker.celery worker --loglevel=info --pool=threads --concurrency=4 --without-gossip --without-mingle
+    startCommand: python -m scripts.schema_guard && celery -A celery_worker.celery worker --loglevel=info --pool=threads --concurrency=4 --without-gossip --without-mingle
     envVars:
       - key: CELERY_BROKER_URL
         sync: false
