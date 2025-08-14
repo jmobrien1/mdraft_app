@@ -97,3 +97,72 @@ class Job(db.Model):
 
     def __repr__(self) -> str:
         return f"<Job {self.id} ({self.status})>"
+
+
+class Proposal(db.Model):
+    """Represent a proposal/RFP package containing multiple documents."""
+
+    __tablename__ = "proposals"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(64), default="active", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    # Relationships
+    user: Mapped[User] = relationship("User")  # type: ignore
+    documents: Mapped[list[ProposalDocument]] = relationship("ProposalDocument", back_populates="proposal", cascade="all, delete-orphan")  # type: ignore
+    requirements: Mapped[list[Requirement]] = relationship("Requirement", back_populates="proposal", cascade="all, delete-orphan")  # type: ignore
+
+    def __repr__(self) -> str:
+        return f"<Proposal {self.id} ({self.name})>"
+
+
+class ProposalDocument(db.Model):
+    """Represent a document within a proposal/RFP package."""
+
+    __tablename__ = "proposal_documents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    proposal_id: Mapped[int] = mapped_column(ForeignKey("proposals.id"), nullable=False)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    document_type: Mapped[str] = mapped_column(String(64), nullable=False)  # 'main_rfp', 'pws', 'soo', 'spec', etc.
+    gcs_uri: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    parsed_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    section_mapping: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON mapping of UCF sections
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    # Relationships
+    proposal: Mapped[Proposal] = relationship("Proposal", back_populates="documents")  # type: ignore
+
+    def __repr__(self) -> str:
+        return f"<ProposalDocument {self.id} ({self.filename})>"
+
+
+class Requirement(db.Model):
+    """Represent a requirement extracted from RFP documents for compliance matrix."""
+
+    __tablename__ = "requirements"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    proposal_id: Mapped[int] = mapped_column(ForeignKey("proposals.id"), nullable=False)
+    requirement_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)  # R-1, R-2, etc.
+    requirement_text: Mapped[str] = mapped_column(Text, nullable=False)
+    section_ref: Mapped[str] = mapped_column(String(128), nullable=False)  # C.1.2, PWS 3.1, etc.
+    page_number: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    source_document: Mapped[str] = mapped_column(String(255), nullable=False)  # filename
+    assigned_owner: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    status: Mapped[str] = mapped_column(String(64), default="pending", nullable=False)  # pending, in_progress, completed
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    # Relationships
+    proposal: Mapped[Proposal] = relationship("Proposal", back_populates="requirements")  # type: ignore
+
+    def __repr__(self) -> str:
+        return f"<Requirement {self.requirement_id} ({self.section_ref})>"

@@ -269,6 +269,9 @@ def create_app() -> Flask:
     from .billing import bp as billing_bp
     app.register_blueprint(billing_bp)
     
+    from .api.agents import bp as agents_bp
+    app.register_blueprint(agents_bp)
+    
     from .cli import register_cli
     register_cli(app)
     
