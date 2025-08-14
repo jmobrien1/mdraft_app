@@ -13,7 +13,10 @@ class Conversion(db.Model):
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
     
-    # Ownership fields
+    # Relationship to proposal (nullable - conversions can exist independently)
+    proposal_id = db.Column(db.Integer, db.ForeignKey("proposals.id"), nullable=True, index=True)
+    
+    # Ownership fields (denormalized for filtering)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
     visitor_session_id = db.Column(db.String(64), nullable=True, index=True)
     

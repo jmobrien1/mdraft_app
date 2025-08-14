@@ -38,10 +38,24 @@ def _get_owner_fields():
     
     owner_id = get_owner_id_for_creation()
     
+    # Get proposal_id if provided in request
+    proposal_id = request.form.get("proposal_id") or request.args.get("proposal_id")
+    if proposal_id:
+        try:
+            proposal_id = int(proposal_id)
+        except (ValueError, TypeError):
+            proposal_id = None
+    
+    fields = {}
     if getattr(current_user, "is_authenticated", False):
-        return {"user_id": owner_id}
+        fields["user_id"] = owner_id
     else:
-        return {"visitor_session_id": owner_id}
+        fields["visitor_session_id"] = owner_id
+    
+    if proposal_id:
+        fields["proposal_id"] = proposal_id
+    
+    return fields
 
 def _convert_with_markitdown(path: str) -> str:
     try:
@@ -335,7 +349,7 @@ def list_conversions():
         public = bool(os.getenv("MDRAFT_PUBLIC_MODE"))
         
         # Get owner filter for the current request
-        from app.auth.ownership import get_owner_filter
+        from app.auth.ownership import get_owner_tuple
         from app.auth.visitor import get_or_create_visitor_session_id
         from flask_login import current_user
         
@@ -344,14 +358,29 @@ def list_conversions():
             resp = make_response()
             vid, resp = get_or_create_visitor_session_id(resp)
         
-        owner_filter = get_owner_filter()
+        who, val = get_owner_tuple()
         
-        if owner_filter:
-            # Filter by owner (user_id or visitor_session_id)
-            q = (Conversion.query
-                 .filter_by(**owner_filter)
-                 .order_by(Conversion.created_at.desc())
-                 .offset(offset).limit(limit))
+        if who and val:
+            # Filter by owner using join to proposals for robust ownership enforcement
+            from app.models import Proposal
+            
+            q = (db.session.query(Conversion)
+                 .outerjoin(Proposal, Conversion.proposal_id == Proposal.id))
+            
+            if who == "user":
+                # Filter by user ownership (either direct or via proposal)
+                q = q.filter(
+                    (Proposal.user_id == val) | 
+                    (Conversion.user_id == val)
+                )
+            else:
+                # Filter by visitor session ownership (either direct or via proposal)
+                q = q.filter(
+                    (Proposal.visitor_session_id == val) | 
+                    (Conversion.visitor_session_id == val)
+                )
+            
+            q = q.order_by(Conversion.created_at.desc()).offset(offset).limit(limit)
         elif public:
             # Public mode - show all conversions
             q = (Conversion.query

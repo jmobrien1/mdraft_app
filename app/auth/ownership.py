@@ -11,6 +11,20 @@ from flask_login import current_user
 from .visitor import get_visitor_session_id
 
 
+def get_owner_tuple() -> Tuple[str, Union[int, str, None]]:
+    """
+    Get the current request owner as a tuple.
+    
+    Returns:
+        Tuple of (owner_type, owner_id) where:
+        - owner_type: "user" or "visitor"
+        - owner_id: user_id (int), visitor_session_id (str), or None
+    """
+    if getattr(current_user, "is_authenticated", False):
+        return ("user", current_user.id)
+    return ("visitor", getattr(g, "visitor_session_id", None))
+
+
 def get_request_owner() -> Tuple[str, Union[int, str]]:
     """
     Get the current request owner (user or visitor).
