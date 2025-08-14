@@ -58,6 +58,11 @@ def health_check() -> Any:
         return jsonify({"status": "database_error"}), 503
 
 
+@bp.get("/healthz")
+def healthz():
+    return "ok", 200
+
+
 @bp.route("/upload", methods=["POST"])
 @limiter.limit(os.getenv("CONVERT_RATE_LIMIT_DEFAULT", "20 per minute"))
 def upload() -> Any:
