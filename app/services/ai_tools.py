@@ -394,7 +394,7 @@ def run_prompt(prompt_path: str, rfp_text: str, json_schema: Optional[Dict[str, 
             partials.append(parsed)
 
         # Merge partials:
-        if _is_array_schema(json_schema):
+        if _schema_is_array(json_schema):
             if "compliance_matrix" in stem:
                 key_candidates = ["requirement_id","requirement_text"]
             elif "evaluation_criteria" in stem:
@@ -457,7 +457,7 @@ def run_prompt(prompt_path: str, rfp_text: str, json_schema: Optional[Dict[str, 
                 partials.append(parsed)
 
             # Merge:
-            if _is_array_schema(json_schema):
+            if _schema_is_array(json_schema):
                 if "compliance_matrix" in stem:
                     key_candidates = ["requirement_id","requirement_text"]
                 elif "evaluation_criteria" in stem:
