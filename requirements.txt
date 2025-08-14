@@ -35,9 +35,9 @@ reportlab==4.0.4
 markitdown[all]==0.1.2
 pdfminer.six==20231228
 PyPDF2==3.0.1
-jsonschema==4.21.1
-openai==1.12.0
+jsonschema>=4.18.0
+openai>=1.40.0
 
 # Monitoring and observability
 sentry-sdk[flask]==2.9.0
-pypdf~=4.2
+pypdf>=4.2.0

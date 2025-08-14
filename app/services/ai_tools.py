@@ -5,6 +5,7 @@ import re
 import json
 import logging
 from typing import Any, Dict, List, Optional
+from app.services.llm_client import chat_json
 
 try:
     from jsonschema import validate as json_validate  # type: ignore
@@ -24,6 +25,55 @@ def _bool_env(name: str) -> bool:
 
 def _normalize_stem(p: str) -> str:
     return re.sub(r'[^a-z0-9]+', '_', os.path.basename(p).lower())
+
+
+def _chunk_text(s: str, max_chars: int = 10000) -> list[str]:
+    # split on paragraph boundaries when possible
+    parts, cur = [], []
+    total = 0
+    for line in s.splitlines(True):
+        cur.append(line)
+        total += len(line)
+        if total >= max_chars and line.strip() == "":
+            parts.append("".join(cur)); cur=[]; total=0
+    if cur: parts.append("".join(cur))
+    return parts
+
+
+def _is_array_schema(schema) -> bool:
+    return bool(schema) and schema.get("type") == "array"
+
+
+def _merge_arrays(items: list[list[dict]], key_candidates: list[str]) -> list[dict]:
+    out, seen = [], set()
+    for arr in items:
+        for row in arr:
+            # pick first available key or stable tuple
+            k = None
+            for c in key_candidates:
+                if isinstance(row, dict) and row.get(c):
+                    k = f"{c}:{str(row[c]).strip().lower()}"
+                    break
+            if k is None:
+                k = str(tuple(sorted(row.items())))  # fallback
+            if k in seen:  # keep the longest details
+                continue
+            seen.add(k)
+            out.append(row)
+    return out
+
+
+def _merge_outline(parts: list[dict]) -> dict:
+    # keep longest outline_markdown; merge annotations by heading
+    best = max(parts, key=lambda p: len(p.get("outline_markdown","")), default={"outline_markdown":"", "annotations":[]})
+    ann_map = {}
+    for p in parts:
+        for a in p.get("annotations", []):
+            h = (a.get("heading") or "").strip().lower()
+            if h and h not in ann_map:
+                ann_map[h] = a
+    merged = {"outline_markdown": best.get("outline_markdown",""), "annotations": list(ann_map.values())}
+    return merged
 
 
 def _dev_stub(prompt_path: str, json_schema: Optional[Dict[str, Any]] = None) -> Any:
@@ -220,27 +270,39 @@ def run_prompt(prompt_path: str, rfp_text: str, json_schema: Optional[Dict[str, 
         f"RFP_TEXT_START\n{rfp_text}\nRFP_TEXT_END"
     )
 
-    # Try to use llm_client if present; otherwise, fail gracefully
-    try:
-        from app.services.llm_client import chat_json  # type: ignore
-    except Exception:
-        LOG.error("llm_client not configured; set MDRAFT_DEV_STUB=1 or wire llm_client.py")
-        raise ValueError("model_error")
+    def _process_chunks() -> Any:
+        chunks = _chunk_text(rfp_text)
+        partials = []
+        for i, ch in enumerate(chunks):
+            messages_i = [system_msg, {"role":"user","content": user_msg_base.replace("RFP_TEXT_START", f"RFP_TEXT_CHUNK_{i}_START").replace("RFP_TEXT_END", f"RFP_TEXT_CHUNK_{i}_END").replace(rfp_text, ch)}]
+            raw = chat_json(messages_i, response_json_hint=bool(json_schema))
+            try:
+                parsed = json.loads(raw)
+            except Exception as e:
+                LOG.warning("Model returned non-JSON or invalid JSON: %s", e)
+                raise ValueError("model_error")
+            _validate_with_schema(parsed, json_schema)
+            partials.append(parsed)
 
-    def _call_and_parse(content_suffix: str = "") -> Any:
-        messages = [system_msg, {"role": "user", "content": user_msg_base + content_suffix}]
-        raw = chat_json(messages, response_json_hint=bool(json_schema))
-        try:
-            parsed = json.loads(raw)
-        except Exception as e:
-            LOG.warning("Model returned non-JSON or invalid JSON: %s", e)
-            raise ValueError("model_error")
-        _validate_with_schema(parsed, json_schema)
-        return parsed
+        # Merge:
+        if _is_array_schema(json_schema):
+            # choose key candidates by file type
+            key_candidates = []
+            stem = _normalize_stem(prompt_path)
+            if "compliance_matrix" in stem: key_candidates = ["requirement_id","requirement_text"]
+            elif "evaluation_criteria" in stem: key_candidates = ["criterion"]
+            elif "submission_checklist" in stem: key_candidates = ["item"]
+            merged = _merge_arrays(partials, key_candidates)
+        else:
+            # outline schema
+            merged = _merge_outline(partials)
+
+        _validate_with_schema(merged, json_schema)
+        return merged
 
     # First attempt
     try:
-        return _call_and_parse()
+        return _process_chunks()
     except JsonSchemaValidationError as ve:
         LOG.warning("JSON schema validation failed on first try: %s", ve)
         # Retry once with a correction hint
@@ -249,7 +311,34 @@ def run_prompt(prompt_path: str, rfp_text: str, json_schema: Optional[Dict[str, 
             "Return VALID JSON ONLY that matches exactly. No prose."
         )
         try:
-            return _call_and_parse(correction)
+            # Update user message with correction hint
+            user_msg_base_with_correction = user_msg_base + correction
+            chunks = _chunk_text(rfp_text)
+            partials = []
+            for i, ch in enumerate(chunks):
+                messages_i = [system_msg, {"role":"user","content": user_msg_base_with_correction.replace("RFP_TEXT_START", f"RFP_TEXT_CHUNK_{i}_START").replace("RFP_TEXT_END", f"RFP_TEXT_CHUNK_{i}_END").replace(rfp_text, ch)}]
+                raw = chat_json(messages_i, response_json_hint=bool(json_schema))
+                try:
+                    parsed = json.loads(raw)
+                except Exception as e:
+                    LOG.warning("Model returned non-JSON or invalid JSON: %s", e)
+                    raise ValueError("model_error")
+                _validate_with_schema(parsed, json_schema)
+                partials.append(parsed)
+
+            # Merge:
+            if _is_array_schema(json_schema):
+                key_candidates = []
+                stem = _normalize_stem(prompt_path)
+                if "compliance_matrix" in stem: key_candidates = ["requirement_id","requirement_text"]
+                elif "evaluation_criteria" in stem: key_candidates = ["criterion"]
+                elif "submission_checklist" in stem: key_candidates = ["item"]
+                merged = _merge_arrays(partials, key_candidates)
+            else:
+                merged = _merge_outline(partials)
+
+            _validate_with_schema(merged, json_schema)
+            return merged
         except Exception as e:
             LOG.exception("Second attempt failed: %s", e)
             raise ValueError("model_error")
