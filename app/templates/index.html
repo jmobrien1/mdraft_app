@@ -34,6 +34,22 @@
     </div>
   </div>
 
+  <div class="section card" id="free-tools">
+    <h2>Free Tools</h2>
+    <div class="row" style="gap: 8px; margin-bottom: 12px;">
+      <button class="btn secondary" id="compliance-matrix" type="button" disabled title="Upload an RFP first">Compliance Matrix</button>
+      <button class="btn secondary" id="evaluation-criteria" type="button" disabled title="Upload an RFP first">Evaluation Criteria</button>
+      <button class="btn secondary" id="annotated-outline" type="button" disabled title="Upload an RFP first">Annotated Outline</button>
+      <button class="btn secondary" id="submission-checklist" type="button" disabled title="Upload an RFP first">Submission Checklist</button>
+    </div>
+    <pre id="free-tools-output" style="white-space:pre-wrap;overflow:auto;max-height:40vh;border:1px solid #ddd;padding:.75rem;border-radius:.5rem;background:#f9f9f9;margin:0;"></pre>
+    <div id="outline-preview" style="margin-top:12px;"></div>
+    <div class="row" style="margin-top:8px;">
+      <button class="btn secondary" id="copyJson" type="button" disabled>Copy JSON</button>
+      <button class="btn secondary" id="downloadCsv" type="button" disabled>Download CSV</button>
+    </div>
+  </div>
+
   <div class="section card">
     <div class="row" style="justify-content:space-between;">
       <h2>Recent conversions</h2>
@@ -73,6 +89,165 @@
   drop.addEventListener('click', (e)=>{ if(e.target===drop) file.click(); });
   file.addEventListener('change', ()=> chosen.textContent = file.files[0] ? file.files[0].name : "");
 
+  // Free Tools functionality
+  const freeToolsSection = document.getElementById('free-tools');
+  const freeToolsButtons = ['compliance-matrix', 'evaluation-criteria', 'annotated-outline', 'submission-checklist'];
+  const freeToolsOutput = document.getElementById('free-tools-output');
+  const outlinePreview = document.getElementById('outline-preview');
+  const copyJsonBtn = document.getElementById('copyJson');
+  const downloadCsvBtn = document.getElementById('downloadCsv');
+
+  // Store last document ID and JSON result globally
+  window.lastDocumentId = null;
+  window.lastJsonResult = null;
+  
+  // Initialize dev helper badge
+  const badge = document.getElementById('docid-badge') || document.createElement('div');
+  badge.id = 'docid-badge';
+  badge.style.cssText = 'font-size:12px;color:#555;margin-top:.25rem;';
+  badge.textContent = 'No document selected';
+  (document.querySelector('#free-tools')||document.body).prepend(badge);
+
+  function enableFreeTools(documentId) {
+    window.lastDocumentId = documentId;
+    freeToolsSection.style.display = 'block';
+    freeToolsButtons.forEach(id => {
+      const button = document.getElementById(id);
+      button.disabled = false;
+      button.title = ''; // Clear any tooltip
+    });
+    
+    // Update badge
+    const badge = document.getElementById('docid-badge');
+    if (badge) {
+      badge.textContent = `Document ID: ${documentId}`;
+    }
+  }
+
+  function disableFreeTools() {
+    window.lastDocumentId = null;
+    window.lastJsonResult = null;
+    freeToolsSection.style.display = 'block'; // Keep visible but with disabled buttons
+    freeToolsButtons.forEach(id => {
+      const button = document.getElementById(id);
+      button.disabled = true;
+      button.title = 'Upload an RFP first'; // Add tooltip for disabled state
+    });
+    copyJsonBtn.disabled = true;
+    downloadCsvBtn.disabled = true;
+    freeToolsOutput.textContent = '';
+    outlinePreview.innerHTML = '';
+    
+    // Update badge
+    const badge = document.getElementById('docid-badge');
+    if (badge) {
+      badge.textContent = 'No document selected';
+    }
+  }
+
+  async function callFreeTool(endpoint) {
+    if (!window.lastDocumentId) return;
+    
+    const button = document.getElementById(endpoint);
+    const originalText = button.textContent;
+    button.textContent = '⏳';
+    button.disabled = true;
+    
+    try {
+      const headers = { 'Content-Type': 'application/json' };
+      const k = (localStorage.getItem('apiKey') || '').trim();
+      if (k) headers['X-API-Key'] = k;
+      
+      const res = await fetch(`/api/generate/${endpoint}`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ document_id: window.lastDocumentId })
+      });
+      
+      if (res.ok) {
+        const data = await res.json();
+        window.lastJsonResult = data;
+        freeToolsOutput.textContent = JSON.stringify(data, null, 2);
+        copyJsonBtn.disabled = false;
+        
+        // Handle outline preview
+        if (data.outline_markdown) {
+          outlinePreview.innerHTML = `<h3>Outline Preview</h3><div style="border:1px solid #ddd;padding:.75rem;border-radius:.5rem;background:#fff;">${data.outline_markdown}</div>`;
+        } else {
+          outlinePreview.innerHTML = '';
+        }
+        
+        // Enable CSV download if result is an array of objects
+        downloadCsvBtn.disabled = !Array.isArray(data);
+        toast('Tool completed');
+      } else {
+        const errorData = await res.json().catch(() => ({ error: 'Unknown error' }));
+        freeToolsOutput.textContent = `Error: ${res.status} - ${JSON.stringify(errorData, null, 2)}`;
+        copyJsonBtn.disabled = true;
+        downloadCsvBtn.disabled = true;
+        outlinePreview.innerHTML = '';
+        toast('Tool failed', 2000);
+      }
+    } catch (err) {
+      freeToolsOutput.textContent = `Network error: ${err.message}`;
+      copyJsonBtn.disabled = true;
+      downloadCsvBtn.disabled = true;
+      outlinePreview.innerHTML = '';
+      toast('Network error', 2000);
+    } finally {
+      button.textContent = originalText;
+      button.disabled = false;
+    }
+  }
+
+  // Attach event listeners to free tool buttons
+  freeToolsButtons.forEach(id => {
+    document.getElementById(id).addEventListener('click', () => callFreeTool(id));
+  });
+
+  // Copy JSON utility
+  copyJsonBtn.addEventListener('click', () => {
+    if (window.lastJsonResult) {
+      copy(JSON.stringify(window.lastJsonResult, null, 2));
+    }
+  });
+
+  // Download CSV utility
+  downloadCsvBtn.addEventListener('click', () => {
+    if (!Array.isArray(window.lastJsonResult) || window.lastJsonResult.length === 0) {
+      toast('No array data to download', 2000);
+      return;
+    }
+    
+    try {
+      const headers = Object.keys(window.lastJsonResult[0]);
+      const csvContent = [
+        headers.join(','),
+        ...window.lastJsonResult.map(row => 
+          headers.map(header => {
+            const value = row[header];
+            // Escape commas and quotes in CSV
+            if (typeof value === 'string' && (value.includes(',') || value.includes('"'))) {
+              return `"${value.replace(/"/g, '""')}"`;
+            }
+            return value || '';
+          }).join(',')
+        )
+      ].join('\n');
+      
+      const blob = new Blob([csvContent], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'free-tools-result.csv';
+      a.click();
+      URL.revokeObjectURL(url);
+      toast('CSV downloaded');
+    } catch (err) {
+      toast('CSV download failed', 2000);
+    }
+  });
+
   form.addEventListener('submit', async (e)=>{
     e.preventDefault();
     if (!file.files.length) return;
@@ -85,7 +260,26 @@
       const k = (localStorage.getItem('apiKey') || '').trim();
       if (k) headers['X-API-Key'] = k;
       const res = await fetch('/api/convert', { method: 'POST', body: fd, headers });
-      const data = await res.json();
+      const json = await res.json();
+      
+      // Log upload response for debugging
+      console.log('[mdraft] upload response:', json);
+      
+      // Accept any common key name for document ID
+      window.lastDocumentId = json.id || json.document_id || json.doc_id || json.uuid || null;
+      
+      // Enable the four Free Tools buttons only if lastDocumentId is truthy
+      const hasDocumentId = !!window.lastDocumentId;
+      if (hasDocumentId) {
+        enableFreeTools(window.lastDocumentId);
+      } else {
+        disableFreeTools();
+      }
+      
+
+      
+      const data = json;
+      
       if (res.status === 202 && data.status === "QUEUED"){
         statusEl.textContent = 'Queued…';
         const poll = async ()=>{
@@ -95,10 +289,19 @@
             statusEl.textContent = "Completed";
             const mres = await fetch(j.links.markdown);
             out.value = await mres.text();   // <-- always load markdown text
+            
+            // Log completion response and handle document ID robustly
+            console.log('[mdraft] completion response:', j);
+            const completionDocId = j.id || j.document_id || j.doc_id || j.uuid || null;
+            if (completionDocId && completionDocId !== window.lastDocumentId) {
+              window.lastDocumentId = completionDocId;
+              enableFreeTools(completionDocId);
+            }
             toast("Done"); await (window.loadRecent && window.loadRecent());
           } else if (j.status === "FAILED"){
             statusEl.textContent = "Failed";
             out.value = j.error || "conversion failed";
+            disableFreeTools();
             toast("Failed", 2000);
           } else {
             setTimeout(poll, 1200);
@@ -118,10 +321,11 @@
       } else {
         statusEl.textContent = 'Error';
         out.value = JSON.stringify(data);
+        disableFreeTools();
         toast("Error", 2000);
       }
     }catch(err){
-      statusEl.textContent = 'Network error'; out.value = String(err); toast("Network error", 2000);
+      statusEl.textContent = 'Network error'; out.value = String(err); disableFreeTools(); toast("Network error", 2000);
     }finally{
       btn.disabled = false; form.reset(); chosen.textContent="";
     }
@@ -169,6 +373,16 @@ window.loadRecent = async function loadRecent() {
         statusEl.textContent = 'Loading…';
         const m = await fetch(item.links.markdown);
         out.value = await m.text();
+        
+        // Set document ID when loading a previous conversion
+        const docId = item.id || item.document_id || item.doc_id || item.uuid || null;
+        if (docId) {
+          window.lastDocumentId = docId;
+          enableFreeTools(docId);
+        } else {
+          disableFreeTools();
+        }
+        
         statusEl.textContent = 'Loaded';
       };
       right.append(a1,a2,cp,loadBtn);

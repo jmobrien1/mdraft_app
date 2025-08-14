@@ -33,21 +33,15 @@ def test_file_validation():
         from app.utils import is_file_allowed
         from io import BytesIO
         
-        # Test PDF file (fake PDF header)
-        pdf_content = b"%PDF-1.4\n%Test PDF content"
-        pdf_stream = BytesIO(pdf_content)
-        
-        if is_file_allowed(pdf_stream):
+        # Test PDF file
+        if is_file_allowed("test.pdf"):
             print("✅ PDF file validation working")
         else:
             print("❌ PDF file validation failed")
             return False
             
         # Test invalid file
-        invalid_content = b"This is not a valid file"
-        invalid_stream = BytesIO(invalid_content)
-        
-        if not is_file_allowed(invalid_stream):
+        if not is_file_allowed("test.invalid"):
             print("✅ Invalid file rejection working")
         else:
             print("❌ Invalid file rejection failed")

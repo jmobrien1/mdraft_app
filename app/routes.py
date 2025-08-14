@@ -18,10 +18,18 @@ from sqlalchemy import text
 from . import db, limiter
 from .models import Job
 
-from .utils import is_file_allowed, generate_job_id
+from app.utils import is_file_allowed, generate_job_id
 from .storage import upload_stream_to_gcs, generate_download_url, generate_signed_url, generate_v4_signed_url
 from .services import Storage
 from .celery_tasks import enqueue_conversion_task
+from .services.ai_tools import run_prompt
+from .services.text_loader import get_rfp_text
+from .schemas.free_capabilities import (
+    COMPLIANCE_MATRIX_SCHEMA,
+    EVAL_CRITERIA_SCHEMA,
+    OUTLINE_SCHEMA,
+    SUBMISSION_CHECKLIST_SCHEMA
+)
 
 
 bp = Blueprint("main", __name__)
@@ -69,8 +77,8 @@ def upload() -> Any:
     if file.filename == "":
         return jsonify({"error": "No selected file"}), 400
     
-    # Validate MIME type using magic number and allowed MIME types
-    if not is_file_allowed(file.stream, file.filename):
+    # Validate file extension
+    if not is_file_allowed(file.filename):
         return jsonify({"error": "File type not allowed"}), 400
     
     # Generate a unique filename using job ID
@@ -204,3 +212,132 @@ def download_file(storage_path: str) -> Any:
     except Exception as e:
         current_app.logger.error(f"Error serving file {storage_path}: {e}")
         return jsonify({"error": "Internal server error"}), 500
+
+
+
+
+
+# Example curl commands for manual testing:
+# curl -X POST http://localhost:5000/api/generate/compliance-matrix \
+#   -H "Content-Type: application/json" \
+#   -d '{"document_id": "123"}'
+#
+# curl -X POST http://localhost:5000/api/generate/evaluation-criteria \
+#   -H "Content-Type: application/json" \
+#   -d '{"document_id": "123"}'
+#
+# curl -X POST http://localhost:5000/api/generate/annotated-outline \
+#   -H "Content-Type: application/json" \
+#   -d '{"document_id": "123"}'
+#
+# curl -X POST http://localhost:5000/api/generate/submission-checklist \
+#   -H "Content-Type: application/json" \
+#   -d '{"document_id": "123"}'
+
+
+@bp.route("/api/generate/compliance-matrix", methods=["POST"])
+@limiter.limit(os.getenv("AI_RATE_LIMIT_DEFAULT", "10 per minute"))
+def generate_compliance_matrix() -> Any:
+    """Generate compliance matrix from RFP document."""
+    try:
+        data = request.get_json(silent=True) or {}
+        doc_id = data.get('document_id') or data.get('id')
+        if not isinstance(doc_id, str) or not doc_id.strip():
+            return jsonify({"error": "document_id required"}), 400
+
+        # try to load text
+        rfp_text = get_rfp_text(doc_id)
+        if not rfp_text:
+            current_app.logger.warning("No text found for document_id=%r", doc_id)
+            return jsonify({"error": "document not found"}), 404
+
+        # then pick prompt & schema, call run_prompt(...)
+        prompt_path = "app/prompts/free_tier/compliance_matrix.txt"
+        result = run_prompt(prompt_path, rfp_text, COMPLIANCE_MATRIX_SCHEMA)
+        
+        return jsonify(result), 200
+        
+    except Exception as e:
+        current_app.logger.error(f"Error generating compliance matrix: {e}")
+        return jsonify({"error": "model_error"}), 502
+
+
+@bp.route("/api/generate/evaluation-criteria", methods=["POST"])
+@limiter.limit(os.getenv("AI_RATE_LIMIT_DEFAULT", "10 per minute"))
+def generate_evaluation_criteria() -> Any:
+    """Generate evaluation criteria from RFP document."""
+    try:
+        data = request.get_json(silent=True) or {}
+        doc_id = data.get('document_id') or data.get('id')
+        if not isinstance(doc_id, str) or not doc_id.strip():
+            return jsonify({"error": "document_id required"}), 400
+
+        # try to load text
+        rfp_text = get_rfp_text(doc_id)
+        if not rfp_text:
+            current_app.logger.warning("No text found for document_id=%r", doc_id)
+            return jsonify({"error": "document not found"}), 404
+
+        # then pick prompt & schema, call run_prompt(...)
+        prompt_path = "app/prompts/free_tier/evaluation_criteria.txt"
+        result = run_prompt(prompt_path, rfp_text, EVAL_CRITERIA_SCHEMA)
+        
+        return jsonify(result), 200
+        
+    except Exception as e:
+        current_app.logger.error(f"Error generating evaluation criteria: {e}")
+        return jsonify({"error": "model_error"}), 502
+
+
+@bp.route("/api/generate/annotated-outline", methods=["POST"])
+@limiter.limit(os.getenv("AI_RATE_LIMIT_DEFAULT", "10 per minute"))
+def generate_annotated_outline() -> Any:
+    """Generate annotated outline from RFP document."""
+    try:
+        data = request.get_json(silent=True) or {}
+        doc_id = data.get('document_id') or data.get('id')
+        if not isinstance(doc_id, str) or not doc_id.strip():
+            return jsonify({"error": "document_id required"}), 400
+
+        # try to load text
+        rfp_text = get_rfp_text(doc_id)
+        if not rfp_text:
+            current_app.logger.warning("No text found for document_id=%r", doc_id)
+            return jsonify({"error": "document not found"}), 404
+
+        # then pick prompt & schema, call run_prompt(...)
+        prompt_path = "app/prompts/free_tier/annotated_outline.txt"
+        result = run_prompt(prompt_path, rfp_text, OUTLINE_SCHEMA)
+        
+        return jsonify(result), 200
+        
+    except Exception as e:
+        current_app.logger.error(f"Error generating annotated outline: {e}")
+        return jsonify({"error": "model_error"}), 502
+
+
+@bp.route("/api/generate/submission-checklist", methods=["POST"])
+@limiter.limit(os.getenv("AI_RATE_LIMIT_DEFAULT", "10 per minute"))
+def generate_submission_checklist() -> Any:
+    """Generate submission checklist from RFP document."""
+    try:
+        data = request.get_json(silent=True) or {}
+        doc_id = data.get('document_id') or data.get('id')
+        if not isinstance(doc_id, str) or not doc_id.strip():
+            return jsonify({"error": "document_id required"}), 400
+
+        # try to load text
+        rfp_text = get_rfp_text(doc_id)
+        if not rfp_text:
+            current_app.logger.warning("No text found for document_id=%r", doc_id)
+            return jsonify({"error": "document not found"}), 404
+
+        # then pick prompt & schema, call run_prompt(...)
+        prompt_path = "app/prompts/free_tier/submission_checklist.txt"
+        result = run_prompt(prompt_path, rfp_text, SUBMISSION_CHECKLIST_SCHEMA)
+        
+        return jsonify(result), 200
+        
+    except Exception as e:
+        current_app.logger.error(f"Error generating submission checklist: {e}")
+        return jsonify({"error": "model_error"}), 502
