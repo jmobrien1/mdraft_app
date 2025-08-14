@@ -111,11 +111,13 @@ class RFPDataLayer:
                 continue
                 
             # Check for section headers
+            section_found = False
             for section_id, pattern in self.section_patterns.items():
                 match = re.match(pattern, line, re.IGNORECASE)
                 if match:
                     # Save previous section if exists
                     if current_section:
+                        current_section.content = '\n'.join(current_content)
                         sections[current_section.section_id] = current_section
                     
                     # Start new section
@@ -127,10 +129,11 @@ class RFPDataLayer:
                         content=""
                     )
                     current_content = []
+                    section_found = True
                     break
             
-            # Add line to current section content
-            if current_section:
+            # Add line to current section content (if not a section header)
+            if current_section and not section_found:
                 current_content.append(line)
         
         # Save final section
