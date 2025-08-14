@@ -1,6 +1,7 @@
 # app/services/ai_tools.py
 from __future__ import annotations
 import os
+import re
 import json
 import logging
 from typing import Any, Dict, List, Optional
@@ -21,14 +22,19 @@ def _bool_env(name: str) -> bool:
     return (os.getenv(name) or "").strip().lower() in DEV_TRUE
 
 
-def _dev_stub(prompt_path: str) -> Any:
+def _normalize_stem(p: str) -> str:
+    return re.sub(r'[^a-z0-9]+', '_', os.path.basename(p).lower())
+
+
+def _dev_stub(prompt_path: str, json_schema: Optional[Dict[str, Any]] = None) -> Any:
     """
     Return deterministic, schema-valid sample payloads for the four free tools.
     This lets the UI work end-to-end without a live model.
     """
-    p = prompt_path.lower()
+    stem = _normalize_stem(prompt_path)
+    LOG.info("DEV STUB HIT prompt_path=%r stem=%r", prompt_path, stem)
 
-    if "compliance_matrix" in p:
+    if stem == "compliance_matrix":
         return [
             {
                 "requirement_id": "L-1",
@@ -53,7 +59,7 @@ def _dev_stub(prompt_path: str) -> Any:
             }
         ]
 
-    if "evaluation_criteria" in p:
+    if stem == "evaluation_criteria":
         return [
             {
                 "criterion": "Technical Approach",
@@ -78,7 +84,7 @@ def _dev_stub(prompt_path: str) -> Any:
             }
         ]
 
-    if "annotated_outline" in p:
+    if stem == "annotated_outline":
         return {
             "outline_markdown": (
                 "# Proposal Outline\n\n"
@@ -102,7 +108,7 @@ def _dev_stub(prompt_path: str) -> Any:
             ]
         }
 
-    if "submission_checklist" in p:
+    if stem == "submission_checklist":
         return [
             {
                 "item": "SF-1449 (or agency cover form), signed",
@@ -130,8 +136,16 @@ def _dev_stub(prompt_path: str) -> Any:
             }
         ]
 
-    # Default fallback: indicate unsupported prompt in stub mode
-    return {"message": "dev_stub_active_but_prompt_not_recognized"}
+    # Fallback: return schema-valid minimal payloads
+    if json_schema:
+        schema_type = json_schema.get("type")
+        if schema_type == "array":
+            return []
+        elif "outline_markdown" in json_schema.get("properties", {}):
+            return {"outline_markdown": "", "annotations": []}
+    
+    # Default fallback: empty array
+    return []
 
 
 def _validate_with_schema(payload: Any, schema: Optional[Dict[str, Any]]) -> None:
@@ -169,7 +183,7 @@ def run_prompt(prompt_path: str, rfp_text: str, json_schema: Optional[Dict[str, 
     # 1) DEV STUB path — immediate, schema-valid data for demos and UI wiring
     if _bool_env("MDRAFT_DEV_STUB"):
         try:
-            payload = _dev_stub(prompt_path)
+            payload = _dev_stub(prompt_path, json_schema)
             _validate_with_schema(payload, json_schema)
             return payload
         except Exception as e:  # pragma: no cover

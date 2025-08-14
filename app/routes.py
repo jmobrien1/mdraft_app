@@ -63,6 +63,14 @@ def healthz():
     return "ok", 200
 
 
+@bp.get("/api/dev/diag")
+def dev_diag():
+    import os
+    from flask import jsonify
+    flag = (os.getenv("MDRAFT_DEV_STUB") or "").strip()
+    return jsonify({"MDRAFT_DEV_STUB": flag, "stub_detected": flag.lower() in {"1","true","yes","on","y"}}), 200
+
+
 @bp.route("/upload", methods=["POST"])
 @limiter.limit(os.getenv("CONVERT_RATE_LIMIT_DEFAULT", "20 per minute"))
 def upload() -> Any:
@@ -240,109 +248,137 @@ def download_file(storage_path: str) -> Any:
 #   -d '{"document_id": "123"}'
 
 
+def _stub_on() -> bool:
+    return (os.getenv("MDRAFT_DEV_STUB") or "").strip().lower() in {"1","true","yes","on","y"}
+
+
 @bp.route("/api/generate/compliance-matrix", methods=["POST"])
 @limiter.limit(os.getenv("AI_RATE_LIMIT_DEFAULT", "10 per minute"))
 def generate_compliance_matrix() -> Any:
     """Generate compliance matrix from RFP document."""
-    try:
-        data = request.get_json(silent=True) or {}
-        doc_id = data.get('document_id') or data.get('id')
-        if not isinstance(doc_id, str) or not doc_id.strip():
-            return jsonify({"error": "document_id required"}), 400
+    data = request.get_json(silent=True) or {}
+    doc_id = data.get('document_id') or data.get('id')
+    if not isinstance(doc_id, str) or not doc_id.strip():
+        return jsonify({"error": "document_id required"}), 400
 
-        # try to load text
+    prompt_path = os.path.join(current_app.root_path, "prompts", "free_tier", "compliance_matrix.txt")
+    current_app.logger.info("gen_compliance_matrix doc_id=%r stub=%r prompt=%s", doc_id, _stub_on(), prompt_path)
+
+    try:
+        if _stub_on():
+            # No loader, no model — exercise UI deterministically
+            payload = run_prompt(prompt_path, "DEV_STUB_PLACEHOLDER", COMPLIANCE_MATRIX_SCHEMA)
+            return jsonify(payload), 200
+
+        # Real path: load text then call model
         rfp_text = get_rfp_text(doc_id)
         if not rfp_text:
-            current_app.logger.warning("No text found for document_id=%r", doc_id)
             return jsonify({"error": "document not found"}), 404
 
-        # then pick prompt & schema, call run_prompt(...)
-        prompt_path = "app/prompts/free_tier/compliance_matrix.txt"
-        result = run_prompt(prompt_path, rfp_text, COMPLIANCE_MATRIX_SCHEMA)
-        
-        return jsonify(result), 200
-        
-    except Exception as e:
-        current_app.logger.error(f"Error generating compliance matrix: {e}")
+        payload = run_prompt(prompt_path, rfp_text, COMPLIANCE_MATRIX_SCHEMA)
+        return jsonify(payload), 200
+    except ValueError as ve:
+        current_app.logger.exception("model_error on compliance-matrix: %s", ve)
         return jsonify({"error": "model_error"}), 502
+    except Exception as e:
+        current_app.logger.exception("server_error on compliance-matrix: %s", e)
+        return jsonify({"error": "server_error"}), 500
 
 
 @bp.route("/api/generate/evaluation-criteria", methods=["POST"])
 @limiter.limit(os.getenv("AI_RATE_LIMIT_DEFAULT", "10 per minute"))
 def generate_evaluation_criteria() -> Any:
     """Generate evaluation criteria from RFP document."""
-    try:
-        data = request.get_json(silent=True) or {}
-        doc_id = data.get('document_id') or data.get('id')
-        if not isinstance(doc_id, str) or not doc_id.strip():
-            return jsonify({"error": "document_id required"}), 400
+    data = request.get_json(silent=True) or {}
+    doc_id = data.get('document_id') or data.get('id')
+    if not isinstance(doc_id, str) or not doc_id.strip():
+        return jsonify({"error": "document_id required"}), 400
 
-        # try to load text
+    prompt_path = os.path.join(current_app.root_path, "prompts", "free_tier", "evaluation_criteria.txt")
+    current_app.logger.info("gen_evaluation_criteria doc_id=%r stub=%r prompt=%s", doc_id, _stub_on(), prompt_path)
+
+    try:
+        if _stub_on():
+            # No loader, no model — exercise UI deterministically
+            payload = run_prompt(prompt_path, "DEV_STUB_PLACEHOLDER", EVAL_CRITERIA_SCHEMA)
+            return jsonify(payload), 200
+
+        # Real path: load text then call model
         rfp_text = get_rfp_text(doc_id)
         if not rfp_text:
-            current_app.logger.warning("No text found for document_id=%r", doc_id)
             return jsonify({"error": "document not found"}), 404
 
-        # then pick prompt & schema, call run_prompt(...)
-        prompt_path = "app/prompts/free_tier/evaluation_criteria.txt"
-        result = run_prompt(prompt_path, rfp_text, EVAL_CRITERIA_SCHEMA)
-        
-        return jsonify(result), 200
-        
-    except Exception as e:
-        current_app.logger.error(f"Error generating evaluation criteria: {e}")
+        payload = run_prompt(prompt_path, rfp_text, EVAL_CRITERIA_SCHEMA)
+        return jsonify(payload), 200
+    except ValueError as ve:
+        current_app.logger.exception("model_error on evaluation-criteria: %s", ve)
         return jsonify({"error": "model_error"}), 502
+    except Exception as e:
+        current_app.logger.exception("server_error on evaluation-criteria: %s", e)
+        return jsonify({"error": "server_error"}), 500
 
 
 @bp.route("/api/generate/annotated-outline", methods=["POST"])
 @limiter.limit(os.getenv("AI_RATE_LIMIT_DEFAULT", "10 per minute"))
 def generate_annotated_outline() -> Any:
     """Generate annotated outline from RFP document."""
-    try:
-        data = request.get_json(silent=True) or {}
-        doc_id = data.get('document_id') or data.get('id')
-        if not isinstance(doc_id, str) or not doc_id.strip():
-            return jsonify({"error": "document_id required"}), 400
+    data = request.get_json(silent=True) or {}
+    doc_id = data.get('document_id') or data.get('id')
+    if not isinstance(doc_id, str) or not doc_id.strip():
+        return jsonify({"error": "document_id required"}), 400
 
-        # try to load text
+    prompt_path = os.path.join(current_app.root_path, "prompts", "free_tier", "annotated_outline.txt")
+    current_app.logger.info("gen_annotated_outline doc_id=%r stub=%r prompt=%s", doc_id, _stub_on(), prompt_path)
+
+    try:
+        if _stub_on():
+            # No loader, no model — exercise UI deterministically
+            payload = run_prompt(prompt_path, "DEV_STUB_PLACEHOLDER", OUTLINE_SCHEMA)
+            return jsonify(payload), 200
+
+        # Real path: load text then call model
         rfp_text = get_rfp_text(doc_id)
         if not rfp_text:
-            current_app.logger.warning("No text found for document_id=%r", doc_id)
             return jsonify({"error": "document not found"}), 404
 
-        # then pick prompt & schema, call run_prompt(...)
-        prompt_path = "app/prompts/free_tier/annotated_outline.txt"
-        result = run_prompt(prompt_path, rfp_text, OUTLINE_SCHEMA)
-        
-        return jsonify(result), 200
-        
-    except Exception as e:
-        current_app.logger.error(f"Error generating annotated outline: {e}")
+        payload = run_prompt(prompt_path, rfp_text, OUTLINE_SCHEMA)
+        return jsonify(payload), 200
+    except ValueError as ve:
+        current_app.logger.exception("model_error on annotated-outline: %s", ve)
         return jsonify({"error": "model_error"}), 502
+    except Exception as e:
+        current_app.logger.exception("server_error on annotated-outline: %s", e)
+        return jsonify({"error": "server_error"}), 500
 
 
 @bp.route("/api/generate/submission-checklist", methods=["POST"])
 @limiter.limit(os.getenv("AI_RATE_LIMIT_DEFAULT", "10 per minute"))
 def generate_submission_checklist() -> Any:
     """Generate submission checklist from RFP document."""
-    try:
-        data = request.get_json(silent=True) or {}
-        doc_id = data.get('document_id') or data.get('id')
-        if not isinstance(doc_id, str) or not doc_id.strip():
-            return jsonify({"error": "document_id required"}), 400
+    data = request.get_json(silent=True) or {}
+    doc_id = data.get('document_id') or data.get('id')
+    if not isinstance(doc_id, str) or not doc_id.strip():
+        return jsonify({"error": "document_id required"}), 400
 
-        # try to load text
+    prompt_path = os.path.join(current_app.root_path, "prompts", "free_tier", "submission_checklist.txt")
+    current_app.logger.info("gen_submission_checklist doc_id=%r stub=%r prompt=%s", doc_id, _stub_on(), prompt_path)
+
+    try:
+        if _stub_on():
+            # No loader, no model — exercise UI deterministically
+            payload = run_prompt(prompt_path, "DEV_STUB_PLACEHOLDER", SUBMISSION_CHECKLIST_SCHEMA)
+            return jsonify(payload), 200
+
+        # Real path: load text then call model
         rfp_text = get_rfp_text(doc_id)
         if not rfp_text:
-            current_app.logger.warning("No text found for document_id=%r", doc_id)
             return jsonify({"error": "document not found"}), 404
 
-        # then pick prompt & schema, call run_prompt(...)
-        prompt_path = "app/prompts/free_tier/submission_checklist.txt"
-        result = run_prompt(prompt_path, rfp_text, SUBMISSION_CHECKLIST_SCHEMA)
-        
-        return jsonify(result), 200
-        
-    except Exception as e:
-        current_app.logger.error(f"Error generating submission checklist: {e}")
+        payload = run_prompt(prompt_path, rfp_text, SUBMISSION_CHECKLIST_SCHEMA)
+        return jsonify(payload), 200
+    except ValueError as ve:
+        current_app.logger.exception("model_error on submission-checklist: %s", ve)
         return jsonify({"error": "model_error"}), 502
+    except Exception as e:
+        current_app.logger.exception("server_error on submission-checklist: %s", e)
+        return jsonify({"error": "server_error"}), 500
