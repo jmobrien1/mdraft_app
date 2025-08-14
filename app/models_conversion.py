@@ -13,6 +13,10 @@ class Conversion(db.Model):
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
     
+    # Ownership fields
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    visitor_session_id = db.Column(db.String(64), nullable=True, index=True)
+    
     # Identification & lifecycle
     sha256 = db.Column(db.String(64), index=True, nullable=True)
     original_mime = db.Column(db.String(120), nullable=True)

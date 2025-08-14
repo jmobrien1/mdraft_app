@@ -13,7 +13,7 @@ from typing import Optional
 import uuid
 
 from flask_login import UserMixin
-from sqlalchemy import Integer, String, DateTime, Text, ForeignKey, Boolean
+from sqlalchemy import Integer, String, DateTime, Text, ForeignKey, Boolean, CheckConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from . import db
@@ -118,6 +118,14 @@ class Proposal(db.Model):
     user: Mapped[Optional[User]] = relationship("User")  # type: ignore
     documents: Mapped[list[ProposalDocument]] = relationship("ProposalDocument", back_populates="proposal", cascade="all, delete-orphan")  # type: ignore
     requirements: Mapped[list[Requirement]] = relationship("Requirement", back_populates="proposal", cascade="all, delete-orphan")  # type: ignore
+
+    __table_args__ = (
+        # Ensure at least one owner dimension is present
+        CheckConstraint(
+            "(user_id IS NOT NULL) OR (visitor_session_id IS NOT NULL)",
+            name="ck_proposals_owner_present"
+        ),
+    )
 
     def __repr__(self) -> str:
         return f"<Proposal {self.id} ({self.name})>"

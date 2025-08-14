@@ -25,6 +25,24 @@ def _links(cid: str):
         "view": f"/v/{cid}",
     }
 
+def _get_owner_fields():
+    """Get ownership fields for the current request."""
+    from .auth.ownership import get_owner_id_for_creation
+    from .auth.visitor import get_or_create_visitor_session_id
+    from flask_login import current_user
+    
+    # Ensure visitor session exists for anonymous users
+    if not getattr(current_user, "is_authenticated", False):
+        resp = None
+        vid, resp = get_or_create_visitor_session_id(resp)
+    
+    owner_id = get_owner_id_for_creation()
+    
+    if getattr(current_user, "is_authenticated", False):
+        return {"user_id": owner_id}
+    else:
+        return {"visitor_session_id": owner_id}
+
 def _convert_with_markitdown(path: str) -> str:
     try:
         from markitdown import MarkItDown
@@ -131,6 +149,7 @@ def api_convert():
             gcs_uri = f"gs://{bucket_name}/{object_key}"
 
             ttl_days = int(os.getenv("RETENTION_DAYS", "30"))
+            owner_fields = _get_owner_fields()
             conv = Conversion(
                 filename=filename,
                 status="QUEUED",
@@ -139,6 +158,7 @@ def api_convert():
                 original_size=original_size,
                 stored_uri=None,  # set below
                 expires_at=(datetime.utcnow() + timedelta(days=ttl_days)) if ttl_days > 0 else None,
+                **owner_fields
             )
             db.session.add(conv)
             db.session.commit()
@@ -228,6 +248,7 @@ def api_convert():
             return jsonify({"error":"extract_failed"}), 422
 
         ttl_days = int(os.getenv("RETENTION_DAYS", "30"))
+        owner_fields = _get_owner_fields()
         conv = Conversion(
             filename=filename,
             status="COMPLETED",
@@ -237,6 +258,7 @@ def api_convert():
             original_size=original_size,
             stored_uri=None,
             expires_at=(datetime.utcnow() + timedelta(days=ttl_days)) if ttl_days > 0 else None,
+            **owner_fields
         )
         db.session.add(conv)
         db.session.commit()
@@ -311,19 +333,32 @@ def list_conversions():
         limit = max(1, min(int(request.args.get("limit", 10)), 50))
         offset = max(0, int(request.args.get("offset", 0)))
         public = bool(os.getenv("MDRAFT_PUBLIC_MODE"))
-        user = getattr(g, "user", None)
-
-        if user:
+        
+        # Get owner filter for the current request
+        from app.auth.ownership import get_owner_filter
+        from app.auth.visitor import get_or_create_visitor_session_id
+        from flask_login import current_user
+        
+        # Ensure visitor session exists for anonymous users
+        if not getattr(current_user, "is_authenticated", False):
+            resp = make_response()
+            vid, resp = get_or_create_visitor_session_id(resp)
+        
+        owner_filter = get_owner_filter()
+        
+        if owner_filter:
+            # Filter by owner (user_id or visitor_session_id)
             q = (Conversion.query
-                 .filter_by(user_id=user.id)
+                 .filter_by(**owner_filter)
                  .order_by(Conversion.created_at.desc())
                  .offset(offset).limit(limit))
         elif public:
+            # Public mode - show all conversions
             q = (Conversion.query
                  .order_by(Conversion.created_at.desc())
                  .offset(offset).limit(limit))
         else:
-            # not public and no user: return empty list
+            # Not public and no owner - return empty list
             resp = make_response(jsonify([]), 200)
             resp.headers["X-Limit"] = str(limit)
             resp.headers["X-Offset"] = str(offset)
@@ -344,6 +379,11 @@ def list_conversions():
         resp = make_response(jsonify(items), 200)
         resp.headers["X-Limit"] = str(limit)
         resp.headers["X-Offset"] = str(offset)
+        
+        # Set visitor session cookie if needed
+        if not getattr(current_user, "is_authenticated", False):
+            vid, resp = get_or_create_visitor_session_id(resp)
+        
         return resp
     except Exception as e:
         current_app.logger.exception("/api/conversions failed")
