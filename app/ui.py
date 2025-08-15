@@ -22,19 +22,35 @@ def index() -> Any:
 
 
 @bp.route("/compliance-matrix/<int:proposal_id>")
-@login_required
 def compliance_matrix(proposal_id: int) -> Any:
     """Render the compliance matrix page for a specific proposal."""
-    # Validate proposal exists and user has access
-    proposal = Proposal.query.filter_by(id=proposal_id, user_id=current_user.id).first()
-    if not proposal:
-        return render_template("errors/404.html"), 404
-    
-    return render_template("compliance_matrix.html", proposal_id=proposal_id)
+    try:
+        from .auth.ownership import can_access_proposal
+        from .auth.visitor import get_or_create_visitor_session_id
+        from .models import Proposal
+        
+        # Ensure visitor session exists for anonymous users
+        if not getattr(current_user, "is_authenticated", False):
+            resp = make_response()
+            vid, resp = get_or_create_visitor_session_id(resp)
+        
+        # Validate proposal exists and user has access
+        if not can_access_proposal(proposal_id):
+            return render_template("errors/404.html"), 404
+        
+        response = make_response(render_template("compliance_matrix.html", proposal_id=proposal_id))
+        
+        # Set visitor session cookie if needed
+        if not getattr(current_user, "is_authenticated", False):
+            vid, response = get_or_create_visitor_session_id(response)
+        
+        return response
+    except Exception as e:
+        current_app.logger.error(f"Compliance matrix error: {e}")
+        return jsonify({"error": "id"}), 500
 
 
 @bp.route("/proposals")
-@login_required
 def proposals() -> Any:
     """Render the proposals list page."""
     return render_template("proposals.html")

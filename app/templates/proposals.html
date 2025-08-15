@@ -188,6 +188,14 @@
   margin-bottom: 20px;
 }
 
+.success {
+  background-color: #d4edda;
+  color: #155724;
+  padding: 15px;
+  border-radius: 4px;
+  margin-bottom: 20px;
+}
+
 .empty-state {
   text-align: center;
   padding: 60px 20px;
@@ -362,6 +370,7 @@ document.addEventListener('DOMContentLoaded', function() {
 async function loadProposals() {
   try {
     const data = await api('/api/proposals');
+    if (data && data.proposals) {
       proposals = data.proposals;
       renderProposals();
     } else {
@@ -449,7 +458,7 @@ async function createProposal(event) {
   };
   
   try {
-    const response = await api('/api/agents/compliance-matrix/proposals', {
+    const newProposal = await api('/api/agents/compliance-matrix/proposals', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -457,18 +466,12 @@ async function createProposal(event) {
       body: JSON.stringify(proposalData)
     });
     
-    if (response.ok) {
-      const newProposal = await response.json();
-      showMessage('Proposal created successfully!', 'success');
-      closeCreateModal();
-      loadProposals(); // Refresh the list
-    } else {
-      const error = await response.json();
-      showMessage(`Failed to create proposal: ${error.error}`, 'error');
-    }
+    showMessage('Proposal created successfully!', 'success');
+    closeCreateModal();
+    loadProposals(); // Refresh the list
   } catch (error) {
     console.error('Failed to create proposal:', error);
-    showMessage('Failed to create proposal', 'error');
+    showMessage(`Failed to create proposal: ${error.message}`, 'error');
   }
 }
 
@@ -486,7 +489,7 @@ async function runAgent(proposalId) {
   try {
     showMessage('Running compliance matrix agent...', 'success');
     
-    const response = await api('/api/agents/compliance-matrix/run', {
+    const result = await api('/api/agents/compliance-matrix/run', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -498,17 +501,11 @@ async function runAgent(proposalId) {
       })
     });
     
-    if (response.ok) {
-      const result = await response.json();
-      showMessage(`Agent completed! Found ${result.total_requirements} requirements`, 'success');
-      loadProposals(); // Refresh to show updated counts
-    } else {
-      const error = await response.json();
-      showMessage(`Agent failed: ${error.error}`, 'error');
-    }
+    showMessage(`Agent completed! Found ${result.total_requirements} requirements`, 'success');
+    loadProposals(); // Refresh to show updated counts
   } catch (error) {
     console.error('Failed to run agent:', error);
-    showMessage('Failed to run agent', 'error');
+    showMessage(`Agent failed: ${error.message}`, 'error');
   }
 }
 

@@ -1,4 +1,10 @@
 # run.py (at repo root, same level as requirements/pyproject)
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
 from app import create_app
 
 # Export a concrete Flask app object for Gunicorn "run:app"
