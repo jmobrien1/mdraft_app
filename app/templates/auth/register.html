@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Register — mdraft{% endblock %}
+{% block content %}
+<div class="card">
+  <h2>Create Account</h2>
+  
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for category, message in messages %}
+        <p style="color: {% if category == 'error' %}#ef4444{% else %}#059669{% endif %}">{{ message }}</p>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+  
+  <form method="post" action="{{ url_for('auth.register') }}">
+    <input type="hidden" name="next" value="{{ request.args.get('next', '') }}"/>
+    
+    <div class="section">
+      <label class="hint">Email</label><br/>
+      <input class="input" type="email" name="email" placeholder="Enter your email" required/>
+    </div>
+    
+    <div class="section">
+      <label class="hint">Password</label><br/>
+      <input class="input" type="password" name="password" placeholder="Enter your password (min 8 characters)" required/>
+    </div>
+    
+    <div class="section">
+      <label class="hint">Confirm Password</label><br/>
+      <input class="input" type="password" name="confirm_password" placeholder="Confirm your password" required/>
+    </div>
+    
+    <div class="section">
+      <button class="btn" type="submit">Create Account</button>
+    </div>
+  </form>
+  
+  <div class="section" style="margin-top: 20px; text-align: center;">
+    <p>Already have an account? <a href="{{ url_for('auth.login', next=request.args.get('next', '')) }}">Log in</a></p>
+  </div>
+</div>
+{% endblock %}

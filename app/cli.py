@@ -4,6 +4,7 @@ from flask import current_app
 from app import create_app, db
 from .models_conversion import Conversion
 from .cleanup import run_cleanup_tasks
+from .auth.allowlist import add_to_allowlist, get_allowlist_entries, is_email_allowed
 
 from google.cloud import storage
 
@@ -71,3 +72,39 @@ def register_cli(app):
     def backfill_sha():
         n = backfill_sha_impl()
         print(f"[backfill-sha] updated {n} rows")
+
+    @app.cli.command("allowlist-add")
+    def allowlist_add():
+        """Add an email to the allowlist."""
+        import click
+        email = click.prompt("Email address")
+        plan = click.prompt("Plan", default="F&F")
+        notes = click.prompt("Notes (optional)", default="")
+        
+        try:
+            entry = add_to_allowlist(email, plan=plan, notes=notes if notes else None)
+            print(f"Added {entry.email} to allowlist with plan {entry.plan}")
+        except Exception as e:
+            print(f"Error adding to allowlist: {e}")
+
+    @app.cli.command("allowlist-list")
+    def allowlist_list():
+        """List all allowlist entries."""
+        entries = get_allowlist_entries()
+        if not entries:
+            print("No allowlist entries found.")
+            return
+        
+        print(f"{'Email':<30} {'Plan':<10} {'Status':<10} {'Created':<20}")
+        print("-" * 70)
+        for entry in entries:
+            print(f"{entry.email:<30} {entry.plan:<10} {entry.status:<10} {entry.created_at.strftime('%Y-%m-%d %H:%M')}")
+
+    @app.cli.command("allowlist-check")
+    def allowlist_check():
+        """Check if an email is allowed."""
+        import click
+        email = click.prompt("Email address")
+        
+        allowed = is_email_allowed(email)
+        print(f"Email {email} is {'ALLOWED' if allowed else 'NOT ALLOWED'}")

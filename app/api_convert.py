@@ -2,6 +2,7 @@ import os
 import tempfile
 import uuid
 from flask import Blueprint, request, jsonify, Response, current_app
+from flask_login import login_required
 from werkzeug.utils import secure_filename
 from datetime import datetime, timedelta, timezone
 
@@ -80,6 +81,7 @@ def _convert_with_markitdown(path: str) -> str:
             return fh.read(8192).decode("utf-8", errors="ignore")
 
 @bp.post("/convert")
+@login_required
 @limiter.limit(rate_limit_for_convert, key_func=rate_limit_key_func)
 def api_convert():
     if not allow_session_or_api_key():

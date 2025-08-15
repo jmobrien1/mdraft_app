@@ -22,51 +22,35 @@ def index() -> Any:
 
 
 @bp.route("/compliance-matrix/<int:proposal_id>")
+@login_required
 def compliance_matrix(proposal_id: int) -> Any:
     """Render the compliance matrix page for a specific proposal."""
     try:
         from .auth.ownership import can_access_proposal
-        from .auth.visitor import get_or_create_visitor_session_id
-        from .models import Proposal
-        
-        # Ensure visitor session exists for anonymous users
-        if not getattr(current_user, "is_authenticated", False):
-            resp = make_response()
-            vid, resp = get_or_create_visitor_session_id(resp)
         
         # Validate proposal exists and user has access
         if not can_access_proposal(proposal_id):
             return render_template("errors/404.html"), 404
         
-        response = make_response(render_template("compliance_matrix.html", proposal_id=proposal_id))
-        
-        # Set visitor session cookie if needed
-        if not getattr(current_user, "is_authenticated", False):
-            vid, response = get_or_create_visitor_session_id(response)
-        
-        return response
+        return render_template("compliance_matrix.html", proposal_id=proposal_id)
     except Exception as e:
         current_app.logger.error(f"Compliance matrix error: {e}")
         return jsonify({"error": "id"}), 500
 
 
 @bp.route("/proposals")
+@login_required
 def proposals() -> Any:
     """Render the proposals list page."""
     return render_template("proposals.html")
 
 
 @bp.route("/api/proposals")
+@login_required
 def get_proposals() -> Any:
-    """Get proposals for the current user or anonymous visitor."""
+    """Get proposals for the current authenticated user."""
     try:
         from .auth.ownership import get_owner_filter
-        from .auth.visitor import get_or_create_visitor_session_id
-        
-        # Ensure visitor session exists for anonymous users
-        if not getattr(current_user, "is_authenticated", False):
-            resp = make_response()
-            vid, resp = get_or_create_visitor_session_id(resp)
         
         # Get filter conditions for current owner
         owner_filter = get_owner_filter()
@@ -89,18 +73,10 @@ def get_proposals() -> Any:
                 "document_count": doc_count,
                 "requirement_count": req_count,
                 "created_at": proposal.created_at.isoformat(),
-                "is_anonymous": proposal.visitor_session_id is not None
+                "is_anonymous": False
             })
         
-        response = jsonify({"proposals": result})
-        
-        # Set visitor session cookie if needed
-        if not getattr(current_user, "is_authenticated", False):
-            resp = make_response(response)
-            vid, resp = get_or_create_visitor_session_id(resp)
-            return resp, 200
-        
-        return response, 200
+        return jsonify({"proposals": result}), 200
         
     except Exception as e:
         current_app.logger.error(f"Failed to get proposals: {e}")

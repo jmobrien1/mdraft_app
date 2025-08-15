@@ -200,20 +200,52 @@ def create_app() -> Flask:
     bcrypt.init_app(app)
     login_manager.init_app(app)
 
-    # --- Demo-safe auth disable (Flask-Login) ---
-    # We don't need authentication for the beta UI. Prevent Flask-Login
-    # from raising "Missing user_loader or request_loader".
-    app.config.setdefault("LOGIN_DISABLED", True)
-    try:
-        # If a LoginManager was attached, give it a no-op user_loader.
-        lm = getattr(app, "login_manager", None)
-        if lm is not None and getattr(lm, "user_callback", None) is None and getattr(lm, "request_callback", None) is None:
-            @lm.user_loader
-            def _noop_user_loader(_):
-                return None
-    except Exception:
-        pass
-    # --- end auth disable ---
+    # --- Authentication Configuration ---
+    # Respect environment variable for login enforcement
+    login_disabled = ENV.get("LOGIN_DISABLED", "false").lower() in {"true", "1", "yes", "on"}
+    app.config.setdefault("LOGIN_DISABLED", login_disabled)
+    
+    # Cookie security configuration for production
+    app.config.setdefault("SESSION_COOKIE_SECURE", ENV.get("SESSION_COOKIE_SECURE", "true").lower() in {"true", "1", "yes", "on"})
+    app.config.setdefault("SESSION_COOKIE_SAMESITE", ENV.get("SESSION_COOKIE_SAMESITE", "Lax"))
+    app.config.setdefault("REMEMBER_COOKIE_SECURE", ENV.get("REMEMBER_COOKIE_SECURE", "true").lower() in {"true", "1", "yes", "on"})
+    app.config.setdefault("REMEMBER_COOKIE_SAMESITE", ENV.get("REMEMBER_COOKIE_SAMESITE", "Lax"))
+    
+    # Configure login manager
+    login_manager.login_view = "auth.login"
+    login_manager.login_message = "Please log in to access this page."
+    login_manager.login_message_category = "error"
+    
+    # Custom unauthorized handler for API routes
+    @login_manager.unauthorized_handler
+    def unauthorized():
+        """Handle unauthorized access - redirect for UI, JSON for API."""
+        from flask import request, jsonify
+        if request.path.startswith("/api/"):
+            return jsonify({"error": "unauthorized", "detail": "Login required"}), 401
+        # For non-API routes, redirect to login (default behavior)
+        from flask import redirect, url_for
+        return redirect(url_for("auth.login", next=request.url))
+    
+    # Only disable login if explicitly configured
+    if login_disabled:
+        try:
+            # If a LoginManager was attached, give it a no-op user_loader.
+            lm = getattr(app, "login_manager", None)
+            if lm is not None and getattr(lm, "user_callback", None) is None and getattr(lm, "request_callback", None) is None:
+                @lm.user_loader
+                def _noop_user_loader(_):
+                    return None
+        except Exception:
+            pass
+    else:
+        # Set up proper user loader when login is enabled
+        @login_manager.user_loader
+        def load_user(user_id):
+            """Load user by ID for Flask-Login."""
+            from .models import User
+            return User.query.get(int(user_id))
+    # --- end auth configuration ---
 
     # Configure logging with stdout stream handler (avoid duplicates)
     level = (os.getenv("LOG_LEVEL") or "INFO").upper()
@@ -249,6 +281,9 @@ def create_app() -> Flask:
     os.makedirs(processed_path, exist_ok=True)
 
     # Register blueprints containing route definitions
+    from .auth.routes import bp as auth_bp
+    app.register_blueprint(auth_bp)
+    
     from .ui import bp as ui_bp
     app.register_blueprint(ui_bp)
 
@@ -288,8 +323,8 @@ def create_app() -> Flask:
     from .api.ops import ops as ops_bp
     app.register_blueprint(ops_bp)
     
-    from .api.errors import api_errors
-    app.register_blueprint(api_errors)
+    from .api.errors import errors
+    app.register_blueprint(errors)
     
     from .cli import register_cli
     register_cli(app)

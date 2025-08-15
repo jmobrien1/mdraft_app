@@ -48,6 +48,21 @@ class User(UserMixin, db.Model):
             db.session.commit()
         return u
 
+    def set_password(self, password: str) -> None:
+        """Set the user's password hash."""
+        from flask_bcrypt import generate_password_hash
+        self.password_hash = generate_password_hash(password).decode("utf-8")
+    
+    def check_password(self, password: str) -> bool:
+        """Check if the provided password matches the stored hash."""
+        from flask_bcrypt import check_password_hash
+        return check_password_hash(self.password_hash, password)
+    
+    @property
+    def is_active(self) -> bool:
+        """Check if the user account is active."""
+        return not self.revoked
+    
     def __repr__(self) -> str:
         return f"<User {self.email}>"
 

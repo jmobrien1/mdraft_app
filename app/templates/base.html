@@ -21,6 +21,13 @@
         <a class="link" href="/proposals" title="RFP Proposals">Proposals</a>
         <a class="link" href="/health" title="health">/health</a>
         <a class="link" href="https://mdraft-web.onrender.com/api/conversions?limit=5" target="_blank">API</a>
+        {% if current_user.is_authenticated %}
+          <span class="link">{{ current_user.email }}</span>
+          <a class="link" href="{{ url_for('auth.logout') }}" title="Logout">Logout</a>
+        {% else %}
+          <a class="link" href="{{ url_for('auth.login') }}" title="Login">Login</a>
+          <a class="link" href="{{ url_for('auth.register') }}" title="Register">Register</a>
+        {% endif %}
         {% if config.BILLING_ENABLED %}
         <a class="link upgrade-btn" href="#" onclick="showUpgradeModal()" title="Upgrade to Pro">Upgrade</a>
         {% endif %}

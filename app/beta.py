@@ -1,11 +1,13 @@
 import os
 import tempfile
 from flask import Blueprint, request, jsonify
+from flask_login import login_required
 from werkzeug.utils import secure_filename
 
 bp = Blueprint("beta", __name__)
 
 @bp.post("/beta/convert")
+@login_required
 def beta_convert():
     f = request.files.get("file")
     if not f:

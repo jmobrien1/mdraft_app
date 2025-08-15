@@ -25,12 +25,19 @@ export function dragAndDrop(fileInput, dropEl){
 // API fetch guard to handle JSON errors gracefully
 export async function api(url, init = {}) {
   const res = await fetch(url, {
+    credentials: 'include',
     ...init,
     headers: { 'Accept': 'application/json', ...(init.headers || {}) }
   });
 
   const ctype = res.headers.get('content-type') || '';
   const isJSON = ctype.includes('application/json');
+
+  if (res.status === 401) {
+    const next = encodeURIComponent(location.pathname + location.search);
+    location.assign(`/auth/login?next=${next}`);
+    return;
+  }
 
   if (!res.ok) {
     // Try to parse JSON error; fallback to text

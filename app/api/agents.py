@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 @bp.route("/compliance-matrix/run", methods=["POST"])
+@login_required
 def run_compliance_matrix_agent() -> Any:
     """Run the Compliance Matrix Agent on a proposal.
     
@@ -105,6 +106,7 @@ def run_compliance_matrix_agent() -> Any:
 
 
 @bp.route("/compliance-matrix/proposals", methods=["POST"])
+@login_required
 def create_proposal() -> Any:
     """Create a new proposal for compliance matrix processing.
     
@@ -136,44 +138,23 @@ def create_proposal() -> Any:
         
         description = data.get("description")
         
-        # Get owner ID for creation
+        # Get owner ID for creation (authenticated users only)
         from ..auth.ownership import get_owner_id_for_creation
-        from ..auth.visitor import get_or_create_visitor_session_id, get_visitor_session_id
-        
-        # Ensure visitor session exists for anonymous users
-        if not getattr(current_user, "is_authenticated", False):
-            resp = make_response()
-            vid, resp = get_or_create_visitor_session_id(resp)
-            logger.info(f"Visitor session ID: {vid}")
         
         owner_id = get_owner_id_for_creation()
         logger.info(f"Owner ID for creation: {owner_id}")
         if not owner_id:
             return jsonify({"error": "Unable to determine owner for proposal creation"}), 400
         
-        # Ensure visitor session exists for anonymous users
-        if not getattr(current_user, "is_authenticated", False):
-            resp = make_response()
-            vid, resp = get_or_create_visitor_session_id(resp)
-        
-        # Create proposal with appropriate owner
+        # Create proposal for authenticated user
         from ..models import Proposal
-        from datetime import datetime, timedelta
         
         proposal = Proposal(
             name=name,
             description=description,
-            status="active"
+            status="active",
+            user_id=owner_id
         )
-        
-        # Set owner based on authentication status
-        if getattr(current_user, "is_authenticated", False):
-            proposal.user_id = owner_id
-        else:
-            proposal.visitor_session_id = owner_id
-            # Set expiration for anonymous proposals
-            ttl_days = int(os.getenv("ANON_PROPOSAL_TTL_DAYS", "14"))
-            proposal.expires_at = datetime.utcnow() + timedelta(days=ttl_days)
         
         db.session.add(proposal)
         db.session.commit()
@@ -186,18 +167,10 @@ def create_proposal() -> Any:
             "visitor_session_id": proposal.visitor_session_id,
             "status": proposal.status,
             "created_at": proposal.created_at.isoformat(),
-            "is_anonymous": proposal.visitor_session_id is not None
+            "is_anonymous": False
         }
         
-        response = jsonify(response_data)
-        
-        # Set visitor session cookie if needed
-        if not getattr(current_user, "is_authenticated", False):
-            resp = make_response(response)
-            vid, resp = get_or_create_visitor_session_id(resp)
-            return resp, 201
-        
-        return response, 201
+        return jsonify(response_data), 201
         
     except Exception as e:
         logger.error(f"Failed to create proposal: {e}")
@@ -205,8 +178,9 @@ def create_proposal() -> Any:
 
 
 @bp.route("/compliance-matrix/proposals", methods=["GET"])
+@login_required
 def list_proposals() -> Any:
-    """List all proposals for the current user or anonymous visitor.
+    """List all proposals for the current authenticated user.
     
     Query parameters:
     - status: Filter by status (active, archived)
@@ -230,13 +204,8 @@ def list_proposals() -> Any:
     try:
         status = request.args.get("status")
         
-        # Get owner filter and ensure visitor session exists
+        # Get owner filter for authenticated user
         from ..auth.ownership import get_owner_filter
-        from ..auth.visitor import get_or_create_visitor_session_id
-        
-        if not getattr(current_user, "is_authenticated", False):
-            resp = make_response()
-            vid, resp = get_or_create_visitor_session_id(resp)
         
         owner_filter = get_owner_filter()
         query = Proposal.query.filter_by(**owner_filter)
@@ -260,18 +229,10 @@ def list_proposals() -> Any:
                 "document_count": doc_count,
                 "requirement_count": req_count,
                 "created_at": proposal.created_at.isoformat(),
-                "is_anonymous": proposal.visitor_session_id is not None
+                "is_anonymous": False
             })
         
-        response = jsonify({"proposals": result})
-        
-        # Set visitor session cookie if needed
-        if not getattr(current_user, "is_authenticated", False):
-            resp = make_response(response)
-            vid, resp = get_or_create_visitor_session_id(resp)
-            return resp, 200
-        
-        return response, 200
+        return jsonify({"proposals": result}), 200
         
     except Exception as e:
         logger.error(f"Failed to list proposals: {e}")
@@ -279,6 +240,7 @@ def list_proposals() -> Any:
 
 
 @bp.route("/compliance-matrix/proposals/<int:proposal_id>/documents", methods=["POST"])
+@login_required
 def add_document_to_proposal(proposal_id: int) -> Any:
     """Add a document to a proposal for processing.
     
@@ -298,13 +260,8 @@ def add_document_to_proposal(proposal_id: int) -> Any:
     }
     """
     try:
-        # Get owner filter and validate proposal access
-        from ..auth.ownership import get_owner_filter, validate_proposal_access
-        from ..auth.visitor import get_or_create_visitor_session_id
-        
-        if not getattr(current_user, "is_authenticated", False):
-            resp = make_response()
-            vid, resp = get_or_create_visitor_session_id(resp)
+        # Get owner filter for authenticated user
+        from ..auth.ownership import get_owner_filter
         
         owner_filter = get_owner_filter()
         proposal = Proposal.query.filter_by(id=proposal_id, **owner_filter).first()
@@ -347,7 +304,7 @@ def add_document_to_proposal(proposal_id: int) -> Any:
         # Create job for processing
         from ..models import Job
         job = Job(
-            user_id=owner_id if getattr(current_user, "is_authenticated", False) else 1,  # Use 1 for anonymous
+            user_id=owner_id,
             filename=filename,
             status="queued",
             gcs_uri=gcs_uri or filename
@@ -387,6 +344,7 @@ def add_document_to_proposal(proposal_id: int) -> Any:
 
 
 @bp.route("/compliance-matrix/proposals/<int:proposal_id>/requirements", methods=["GET"])
+@login_required
 def get_proposal_requirements(proposal_id: int) -> Any:
     """Get all requirements for a proposal.
     
@@ -466,6 +424,7 @@ def get_proposal_requirements(proposal_id: int) -> Any:
 
 
 @bp.route("/compliance-matrix/requirements/<string:requirement_id>", methods=["PUT"])
+@login_required
 def update_requirement(requirement_id: str) -> Any:
     """Update a requirement (assign owner, change status, add notes).
     
@@ -497,11 +456,6 @@ def update_requirement(requirement_id: str) -> Any:
         
         # Get owner filter and validate proposal access
         from ..auth.ownership import get_owner_filter
-        from ..auth.visitor import get_or_create_visitor_session_id
-        
-        if not getattr(current_user, "is_authenticated", False):
-            resp = make_response()
-            vid, resp = get_or_create_visitor_session_id(resp)
         
         owner_filter = get_owner_filter()
         proposal = Proposal.query.filter_by(id=proposal_id, **owner_filter).first()
@@ -535,6 +489,7 @@ def update_requirement(requirement_id: str) -> Any:
 
 
 @bp.route("/compliance-matrix/proposals/<int:proposal_id>/export", methods=["GET"])
+@login_required
 def export_compliance_matrix(proposal_id: int) -> Any:
     """Export compliance matrix as CSV, XLSX, or PDF.
     
@@ -548,11 +503,6 @@ def export_compliance_matrix(proposal_id: int) -> Any:
     try:
         # Get owner filter and validate proposal access
         from ..auth.ownership import get_owner_filter
-        from ..auth.visitor import get_or_create_visitor_session_id
-        
-        if not getattr(current_user, "is_authenticated", False):
-            resp = make_response()
-            vid, resp = get_or_create_visitor_session_id(resp)
         
         owner_filter = get_owner_filter()
         proposal = Proposal.query.filter_by(id=proposal_id, **owner_filter).first()

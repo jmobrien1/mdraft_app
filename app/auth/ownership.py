@@ -48,12 +48,10 @@ def get_owner_filter() -> dict:
     Returns:
         Dictionary with appropriate filter conditions for the current owner
     """
-    owner_type, owner_id = get_request_owner()
-    
-    if owner_type == "user":
-        return {"user_id": owner_id}
+    if getattr(current_user, "is_authenticated", False) and current_user.id is not None:
+        return {"user_id": current_user.id}
     else:
-        return {"visitor_session_id": owner_id}
+        return {"user_id": None}  # No access for unauthenticated users
 
 
 def validate_proposal_access(proposal) -> bool:
@@ -86,29 +84,21 @@ def can_access_proposal(proposal_id: int) -> bool:
     """
     from ..models import Proposal
     
-    owner_type, owner_id = get_request_owner()
+    if getattr(current_user, "is_authenticated", False) and current_user.id is not None:
+        proposal = Proposal.query.filter_by(id=proposal_id, user_id=current_user.id).first()
+        return proposal is not None
     
-    if owner_type == "user":
-        proposal = Proposal.query.filter_by(id=proposal_id, user_id=owner_id).first()
-    else:
-        proposal = Proposal.query.filter_by(id=proposal_id, visitor_session_id=owner_id).first()
-    
-    return proposal is not None
+    return False
 
 
-def get_owner_id_for_creation() -> Optional[Union[int, str]]:
+def get_owner_id_for_creation() -> Optional[int]:
     """
     Get the owner ID to use when creating new resources.
     
     Returns:
-        user_id (int) for authenticated users, visitor_session_id (str) for anonymous,
-        or None if no valid owner can be determined
+        user_id (int) for authenticated users, or None if no valid owner can be determined
     """
-    owner_type, owner_id = get_request_owner()
-    
-    if owner_type == "user" and owner_id is not None:
-        return owner_id
-    elif owner_type == "visitor" and owner_id is not None:
-        return owner_id
+    if getattr(current_user, "is_authenticated", False) and current_user.id is not None:
+        return current_user.id
     
     return None

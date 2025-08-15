@@ -12,6 +12,7 @@ from decimal import Decimal
 from typing import Any
 
 from flask import Blueprint, jsonify, request
+from flask_login import login_required
 from pypdf import PdfReader
 from .utils import is_file_allowed
 from .utils.authz import allow_session_or_api_key
@@ -98,6 +99,7 @@ def _calculate_cost(pages: int) -> str:
 
 
 @bp.route("/estimate", methods=["POST"])
+@login_required
 def estimate() -> Any:
     """Estimate pages and cost for a document without uploading.
     

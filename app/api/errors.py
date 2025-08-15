@@ -1,9 +1,24 @@
+"""
+API error handlers for the mdraft application.
+
+This module provides custom error handlers for API endpoints,
+ensuring consistent JSON responses for errors.
+"""
 from flask import Blueprint, jsonify, request
 from werkzeug.exceptions import HTTPException
 
-api_errors = Blueprint("api_errors", __name__)
+errors = Blueprint("errors", __name__)
 
-@api_errors.app_errorhandler(Exception)
+
+@errors.app_errorhandler(401)
+def handle_unauth(e):
+    """Handle 401 Unauthorized errors for API endpoints."""
+    if request.path.startswith("/api/"):
+        return jsonify({"error": "unauthorized", "detail": "Login required"}), 401
+    return e
+
+
+@errors.app_errorhandler(Exception)
 def handle_exception(e):
     # Only force JSON for API routes
     if not request.path.startswith("/api/"):
