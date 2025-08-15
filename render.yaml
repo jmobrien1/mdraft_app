@@ -12,6 +12,8 @@ services:
         value: production
       - key: FLASK_APP
         value: run.py
+      - key: DATABASE_URL
+        sync: false
       - key: SECRET_KEY
         generateValue: true
       - key: MDRAFT_PUBLIC_MODE
@@ -61,6 +63,8 @@ services:
     envVars:
       - key: FLASK_APP
         value: run.py
+      - key: DATABASE_URL
+        sync: false
       - key: CELERY_BROKER_URL
         sync: false
       - key: CELERY_RESULT_BACKEND
@@ -84,6 +88,8 @@ services:
     runtime: python-3.11.11
     startCommand: flask --app app:create_app cleanup
     envVars:
+      - key: DATABASE_URL
+        sync: false
       - key: GOOGLE_APPLICATION_CREDENTIALS
         value: /etc/secrets/gcp.json
       - key: GCS_BUCKET_NAME
