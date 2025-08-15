@@ -369,13 +369,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
 async function loadProposals() {
   try {
-    const data = await api('/api/proposals');
-    if (data && data.proposals) {
-      proposals = data.proposals;
-      renderProposals();
-    } else {
-      showMessage('Failed to load proposals', 'error');
-    }
+    const data = await api('/api/agents/compliance-matrix/proposals');
+    proposals = Array.isArray(data.proposals) ? data.proposals : [];
+    renderProposals();
   } catch (error) {
     console.error('Failed to load proposals:', error);
     showMessage('Failed to load proposals', 'error');
@@ -458,17 +454,14 @@ async function createProposal(event) {
   };
   
   try {
-    const newProposal = await api('/api/agents/compliance-matrix/proposals', {
+    const created = await api('/api/agents/compliance-matrix/proposals', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(proposalData)
     });
-    
     showMessage('Proposal created successfully!', 'success');
     closeCreateModal();
-    loadProposals(); // Refresh the list
+    loadProposals();
   } catch (error) {
     console.error('Failed to create proposal:', error);
     showMessage(`Failed to create proposal: ${error.message}`, 'error');
