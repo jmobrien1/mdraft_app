@@ -30,6 +30,13 @@ def get_engine_url():
             '%', '%%')
     except AttributeError:
         return str(get_engine().url).replace('%', '%%')
+    except Exception:
+        # Fallback to environment variables when no Flask app context
+        import os
+        url = os.getenv('SQLALCHEMY_DATABASE_URI') or os.getenv('DATABASE_URL')
+        if not url:
+            raise
+        return url.replace('%', '%%')
 
 
 # add your model's MetaData object here
