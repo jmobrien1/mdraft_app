@@ -101,6 +101,58 @@ A Flask-based SaaS application that converts documents (PDF, DOCX) to Markdown f
 
 The application will be available at `http://localhost:5000`
 
+## Deployment
+
+### Render Deployment
+
+The application is configured for deployment on Render with the following features:
+
+#### Pre-Deploy Migration
+- **Script**: `scripts/migration_sentry.sh`
+- **Action**: Runs `flask db upgrade` before serving
+- **Features**: 
+  - Database connectivity check
+  - Alembic migration execution
+  - Schema validation
+  - Auto-repair for migration issues
+
+#### Health Checks
+- **Endpoint**: `/health` - Lightweight health check
+- **Response**: `{"status": "ok"}`
+- **Use**: Load balancer health checks, basic monitoring
+
+#### Smoke Testing
+Two smoke test options are available:
+
+**Python Smoke Test (Comprehensive):**
+```bash
+# Set environment variables
+export SMOKE_TEST_URL="https://your-app.onrender.com"
+export ADMIN_EMAIL="admin@example.com"
+export ADMIN_PASSWORD="your-password"
+
+# Run full end-to-end test
+python scripts/smoke_test.py
+```
+
+**Shell Smoke Test (Basic):**
+```bash
+# Set environment variables
+export SMOKE_TEST_URL="https://your-app.onrender.com"
+
+# Run basic connectivity test
+./scripts/smoke_test.sh
+```
+
+#### Deployment Checklist
+- [ ] Database migrations run successfully
+- [ ] Health check endpoint returns `{"status": "ok"}`
+- [ ] Session cookies configured for HTTPS
+- [ ] Rate limiting enabled
+- [ ] Authentication required (`MDRAFT_PUBLIC_MODE=0`)
+- [ ] Smoke test passes
+- [ ] Worker service (if used) responds to ping
+
 ### Environment Configuration
 
 Copy `.env.example` to `.env` and configure the following variables:
@@ -137,6 +189,50 @@ DOCAI_LOCATION=us
 # Database (Google Cloud SQL)
 DATABASE_URL=postgresql://username:password@/database_name?host=/cloudsql/project:region:instance
 ```
+
+#### Render Deployment Environment Variables
+
+The following environment variables are configured in `render.yaml` for production deployment:
+
+**Security & Authentication:**
+- `SECRET_KEY`: Auto-generated stable secret key for session encryption
+- `MDRAFT_PUBLIC_MODE`: Set to "0" to require authentication
+- `LOGIN_DISABLED`: Set to "false" to enable login requirement
+- `ALLOWLIST`: Comma-separated list of allowed email addresses
+
+**Session Cookie Security (HTTPS):**
+- `SESSION_COOKIE_SECURE`: Set to "true" for HTTPS-only cookies
+- `SESSION_COOKIE_SAMESITE`: Set to "Lax" for CSRF protection
+- `REMEMBER_COOKIE_SECURE`: Set to "true" for HTTPS-only remember cookies
+- `REMEMBER_COOKIE_SAMESITE`: Set to "Lax" for CSRF protection
+
+**Rate Limiting:**
+- `GLOBAL_RATE_LIMIT`: Set to "120 per minute" for abuse protection
+- `FLASK_LIMITER_STORAGE_URI`: Redis URL for rate limiting (if configured)
+
+**Queue Configuration:**
+- `QUEUE_MODE`: Set to "sync" for synchronous processing (change to "async" for background workers)
+- `CELERY_BROKER_URL`: Redis URL for Celery broker
+- `CELERY_RESULT_BACKEND`: Redis URL for Celery results
+
+**Google Cloud Services:**
+- `GOOGLE_APPLICATION_CREDENTIALS`: Path to GCP service account key
+- `GCS_BUCKET_NAME`: Google Cloud Storage bucket for uploads
+- `USE_GCS`: Set to "0" to disable GCS (use local storage)
+
+**Monitoring & Logging:**
+- `SENTRY_DSN`: Sentry DSN for error tracking
+- `SENTRY_ENVIRONMENT`: Set to "production"
+- `LOG_LEVEL`: Logging level (default: INFO)
+
+**Webhook Security:**
+- `WEBHOOK_SECRET`: Secret for webhook signature verification
+
+**Database Migration:**
+- `DATABASE_URL`: PostgreSQL connection string
+- Pre-deploy script runs `flask db upgrade` automatically
+
+**Note:** Sensitive values (marked with `sync: false` in render.yaml) must be configured manually in the Render dashboard.
 
 ## API Reference
 

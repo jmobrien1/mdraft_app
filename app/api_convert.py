@@ -147,14 +147,14 @@ def api_convert():
         if not force:
             existing = Conversion.query.filter_by(sha256=file_hash, status="COMPLETED").order_by(Conversion.created_at.desc()).first()
             if existing and existing.markdown:
-                return jsonify(
-                    id=existing.id,
-                    filename=existing.filename,
-                    status="COMPLETED",
-                    duplicate_of=existing.id,
-                    links=_links(existing.id),
-                    note="deduplicated"
-                ), 200
+                return jsonify({
+                    "conversion_id": existing.id,
+                    "status": "COMPLETED",
+                    "filename": existing.filename,
+                    "duplicate_of": existing.id,
+                    "links": _links(existing.id),
+                    "note": "deduplicated"
+                }), 200
         
         try:
             from google.cloud import storage
@@ -190,15 +190,12 @@ def api_convert():
             from celery_worker import celery
             celery.send_task("convert_from_gcs", args=[conv.id, gcs_uri, filename, callback_url])
 
-            resp = {
-                "id": conv_id,
-                "filename": filename,
+            return jsonify({
+                "conversion_id": conv_id,
                 "status": conv.status,
+                "filename": filename,
                 "links": _links(conv_id),
-            }
-            if callback_url:
-                resp["callback_url"] = callback_url
-            return jsonify(resp), 202
+            }), 202
         except Exception as e:
             current_app.logger.exception("convert_failed: %s", e)
             if conv is not None:
@@ -243,14 +240,14 @@ def api_convert():
     if not force:
         existing = Conversion.query.filter_by(sha256=file_hash, status="COMPLETED").order_by(Conversion.created_at.desc()).first()
         if existing and existing.markdown:
-            return jsonify(
-                id=existing.id,
-                filename=existing.filename,
-                status="COMPLETED",
-                duplicate_of=existing.id,
-                links=_links(existing.id),
-                note="deduplicated"
-            ), 200
+            return jsonify({
+                "conversion_id": existing.id,
+                "status": "COMPLETED",
+                "filename": existing.filename,
+                "duplicate_of": existing.id,
+                "links": _links(existing.id),
+                "note": "deduplicated"
+            }), 200
 
     try:
         # Wrap downstream converter in try/except and map expected failures
@@ -300,12 +297,12 @@ def api_convert():
             except Exception as e:
                 current_app.logger.exception("webhook_sync_error: %s", e)
         
-        return jsonify(
-            id=conv_id,
-            filename=filename,
-            status=conv.status,
-            links=_links(conv_id),
-        ), 200
+        return jsonify({
+            "conversion_id": conv_id,
+            "status": conv.status,
+            "filename": filename,
+            "links": _links(conv_id),
+        }), 200
     except Exception as e:
         current_app.logger.exception("convert_failed: %s", e)
         if conv is not None:
@@ -327,16 +324,47 @@ def api_convert():
 @bp.get("/conversions/<id>")
 def get_conversion(id):
     conv = Conversion.query.get_or_404(id)
-    return jsonify(
-        id=conv.id,
-        filename=conv.filename,
-        status=conv.status,
-        error=conv.error,
-        links={
+    
+    # Check if this is an async task that failed
+    error_details = None
+    if conv.status == "FAILED" and conv.error:
+        error_details = {
+            "error": conv.error,
+            "readable_message": _get_readable_error_message(conv.error)
+        }
+    
+    return jsonify({
+        "conversion_id": conv.id,
+        "filename": conv.filename,
+        "status": conv.status,
+        "error": error_details,
+        "links": {
             "markdown": f"/api/conversions/{conv.id}/markdown",
             "view": f"/v/{conv.id}",
         }
-    )
+    })
+
+
+def _get_readable_error_message(error_text: str) -> str:
+    """Convert technical error messages to user-friendly messages."""
+    error_lower = error_text.lower()
+    
+    if "file not found" in error_lower or "no such file" in error_lower:
+        return "The uploaded file could not be found or processed. Please try uploading again."
+    elif "unsupported" in error_lower or "file type" in error_lower:
+        return "This file type is not supported. Please upload a PDF, DOCX, or other supported document format."
+    elif "size" in error_lower or "too large" in error_lower:
+        return "The file is too large. Please upload a smaller file (under 50MB)."
+    elif "permission" in error_lower or "access" in error_lower:
+        return "Permission denied. Please check your account status and try again."
+    elif "network" in error_lower or "connection" in error_lower:
+        return "Network error occurred. Please check your connection and try again."
+    elif "timeout" in error_lower:
+        return "The conversion took too long and timed out. Please try again with a smaller file."
+    elif "memory" in error_lower or "out of memory" in error_lower:
+        return "The file is too complex to process. Please try with a simpler document."
+    else:
+        return "An error occurred during conversion. Please try again or contact support if the problem persists."
 
 @bp.get("/conversions/<id>/markdown")
 def get_conversion_markdown(id):

@@ -413,7 +413,16 @@ def process_job(job_id: int, gcs_uri: str) -> str:
     
     # Choose conversion engine
     engine = choose_engine(mime_type, flags)
-    logger.info(f"Using {engine} engine for conversion: {job.filename} (MIME: {mime_type})")
+    
+    # Log which extractor is being used and why
+    pro_enabled = flags.get("PRO_CONVERSION_ENABLED", "false").lower() == "true"
+    docai_configured = all([flags.get("GOOGLE_CLOUD_PROJECT"), flags.get("DOCAI_PROCESSOR_ID")])
+    
+    if engine == "docai":
+        logger.info(f"Using DocAI extractor for {job.filename} (MIME: {mime_type}) - Pro conversion enabled: {pro_enabled}, DocAI configured: {docai_configured}")
+    else:
+        reason = "Pro conversion disabled" if not pro_enabled else "DocAI not configured" if not docai_configured else f"Not PDF ({mime_type})"
+        logger.info(f"Using markitdown extractor for {job.filename} (MIME: {mime_type}) - Reason: {reason}")
     
     try:
         if engine == "docai":

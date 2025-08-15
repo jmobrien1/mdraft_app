@@ -287,19 +287,32 @@
 
   form.addEventListener('submit', async (e)=>{
     e.preventDefault();
-    if (!file.files.length) return;
+    console.info('Form submission started');
+    if (!file.files.length) {
+      console.warn('No file selected');
+      return;
+    }
+    
     const fd = new FormData();
     fd.append('file', file.files[0]);
+    console.info('File prepared for upload:', file.files[0].name, 'Size:', file.files[0].size);
+    
     btn.disabled = true; statusEl.textContent = 'Uploading…';
 
     try{
-      const json = await api('/api/convert', { method: 'POST', body: fd, credentials: 'same-origin' });
+      console.info('Making API call to /api/convert (POST)');
+      const json = await api('/api/convert', { 
+        method: 'POST', 
+        body: fd, 
+        credentials: 'include'  // Ensure credentials are included
+      });
       
       // Log upload response for debugging
-      console.log('[mdraft] upload response:', json);
+      console.info('Upload response received:', json);
       
       // Accept any common key name for document ID
       window.lastDocumentId = json.id || json.document_id || json.doc_id || json.uuid || null;
+      console.info('Document ID extracted:', window.lastDocumentId);
       
       // Enable the four Free Tools buttons only if lastDocumentId is truthy
       const hasDocumentId = !!window.lastDocumentId;
@@ -314,15 +327,19 @@
       const data = json;
       
       if (data.status === "QUEUED"){
+        console.info('Document queued, starting polling');
         statusEl.textContent = 'Queued…';
         const poll = async ()=>{
+          console.info('Polling job status...');
           const j = await api(data.links.self);
+          console.info('Poll response:', j);
           if (j.status === "COMPLETED"){
+            console.info('Job completed, loading markdown');
             statusEl.textContent = "Completed";
             out.value = await api(j.links.markdown);   // <-- always load markdown text
             
             // Log completion response and handle document ID robustly
-            console.log('[mdraft] completion response:', j);
+            console.info('Completion response:', j);
             const completionDocId = j.id || j.document_id || j.doc_id || j.uuid || null;
             if (completionDocId && completionDocId !== window.lastDocumentId) {
               window.lastDocumentId = completionDocId;
@@ -330,27 +347,36 @@
             }
             toast("Done"); await (window.loadRecent && window.loadRecent());
           } else if (j.status === "FAILED"){
+            console.error('Job failed:', j.error);
             statusEl.textContent = "Failed";
             out.value = j.error || "conversion failed";
             disableFreeTools();
             toast("Failed", 2000);
           } else {
+            console.info('Job still processing, polling again in 1.2s');
             setTimeout(poll, 1200);
           }
         }; poll();
       } else {
+        console.info('Document processed immediately');
         statusEl.textContent = 'Done';
         if (data.markdown) {
           out.value = data.markdown;
         } else if (data.links && data.links.markdown) {
+          console.info('Fetching markdown from link');
           out.value = await api(data.links.markdown);  // <-- fetch when only a link is returned
         } else {
+          console.warn('No markdown content found in response');
           out.value = ""; // nothing? keep empty
         }
         toast("Done"); await (window.loadRecent && window.loadRecent());
       }
     }catch(err){
-      statusEl.textContent = 'Network error'; out.value = String(err); disableFreeTools(); toast("Network error", 2000);
+      console.error('Upload failed:', err);
+      statusEl.textContent = 'Upload failed'; 
+      out.value = String(err); 
+      disableFreeTools(); 
+      toast("Upload failed", 2000);
     }finally{
       btn.disabled = false; form.reset(); chosen.textContent="";
     }
@@ -433,19 +459,30 @@ window.loadRecent && window.loadRecent();
   const line  = document.getElementById('estimate-line');
   if (!input || !line) return;
   input.addEventListener('change', async () => {
-    if (!input.files || !input.files[0]) { line.textContent = ''; return; }
+    if (!input.files || !input.files[0]) { 
+      console.info('No file selected for estimation');
+      line.textContent = ''; 
+      return; 
+    }
     const file = input.files[0];
+    console.info('File selected for estimation:', file.name, 'Size:', file.size);
     line.textContent = 'Estimating…';
     try {
       const fd = new FormData();
       fd.append('file', file, file.name);
+      console.info('Making API call to /api/estimate (POST)');
       const data = await api('/api/estimate', {
         method: 'POST',
         body: fd,
         headers: { 'Accept': 'application/json' },
-        credentials: 'same-origin',
+        credentials: 'include',
       });
-      if (!data || typeof data.pages !== 'number') { line.textContent = 'Estimate unavailable.'; return; }
+      console.info('Estimate response:', data);
+      if (!data || typeof data.pages !== 'number') { 
+        console.warn('Invalid estimate response format');
+        line.textContent = 'Estimate unavailable.'; 
+        return; 
+      }
       line.textContent = `Estimate: ~${data.pages} premium pages → ~$${data.est_cost_usd} (not billed until run).`;
     } catch (err) {
       console.error('Estimate fetch failed', err);

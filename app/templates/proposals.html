@@ -66,6 +66,15 @@
   background-color: #1e7e34;
 }
 
+.btn-danger {
+  background-color: #dc3545;
+  color: white;
+}
+
+.btn-danger:hover {
+  background-color: #c82333;
+}
+
 .proposals-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
@@ -191,6 +200,14 @@
 .success {
   background-color: #d4edda;
   color: #155724;
+  padding: 15px;
+  border-radius: 4px;
+  margin-bottom: 20px;
+}
+
+.info {
+  background-color: #d1ecf1;
+  color: #0c5460;
   padding: 15px;
   border-radius: 4px;
   margin-bottom: 20px;
@@ -364,17 +381,41 @@ let proposals = [];
 
 // Initialize the page
 document.addEventListener('DOMContentLoaded', function() {
+  console.info('Proposals page loaded, calling loadProposals()');
   loadProposals();
 });
 
 async function loadProposals() {
+  console.info('loadProposals() called');
   try {
-    const data = await api('/api/agents/compliance-matrix/proposals');
+    console.info('Making API call to /api/agents/compliance-matrix/proposals');
+    
+    // Add timeout to prevent hanging
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Request timeout - server took too long to respond')), 10000);
+    });
+    
+    const apiPromise = api('/api/agents/compliance-matrix/proposals');
+    const data = await Promise.race([apiPromise, timeoutPromise]);
+    
+    console.info('API response received:', data);
     proposals = Array.isArray(data.proposals) ? data.proposals : [];
+    console.info('Proposals loaded:', proposals.length);
     renderProposals();
   } catch (error) {
     console.error('Failed to load proposals:', error);
-    showMessage('Failed to load proposals', 'error');
+    const errorMessage = error.message || 'Failed to load proposals';
+    showMessage(`Failed to load proposals: ${errorMessage}`, 'error');
+    
+    // Show error in the container instead of loading message
+    const container = document.getElementById('proposals-container');
+    container.innerHTML = `
+      <div class="error">
+        <h3>Failed to Load Proposals</h3>
+        <p>${errorMessage}</p>
+        <button class="btn btn-primary" onclick="loadProposals()">Retry</button>
+      </div>
+    `;
   }
 }
 
@@ -425,6 +466,9 @@ function renderProposals() {
         <button class="btn btn-success" onclick="runAgent(${proposal.id})">
           <span>🤖</span> Run Agent
         </button>
+        <button class="btn btn-danger" onclick="deleteProposal(${proposal.id}, '${proposal.name}')">
+          <span>🗑️</span> Delete
+        </button>
       </div>
       
       <div class="proposal-date">
@@ -435,16 +479,19 @@ function renderProposals() {
 }
 
 function showCreateModal() {
+  console.info('showCreateModal() called');
   document.getElementById('create-modal').style.display = 'block';
   document.getElementById('proposal-name').focus();
 }
 
 function closeCreateModal() {
+  console.info('closeCreateModal() called');
   document.getElementById('create-modal').style.display = 'none';
   document.getElementById('create-proposal-form').reset();
 }
 
 async function createProposal(event) {
+  console.info('createProposal() called');
   event.preventDefault();
   
   const formData = new FormData(event.target);
@@ -453,12 +500,16 @@ async function createProposal(event) {
     description: formData.get('description')
   };
   
+  console.info('Creating proposal with data:', proposalData);
+  
   try {
+    console.info('Making API call to /api/agents/compliance-matrix/proposals (POST)');
     const created = await api('/api/agents/compliance-matrix/proposals', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(proposalData)
     });
+    console.info('Proposal created successfully:', created);
     showMessage('Proposal created successfully!', 'success');
     closeCreateModal();
     loadProposals();
@@ -469,19 +520,22 @@ async function createProposal(event) {
 }
 
 function viewComplianceMatrix(proposalId) {
+  console.info('viewComplianceMatrix() called with proposalId:', proposalId);
   window.location.href = `/compliance-matrix/${proposalId}`;
 }
 
 function uploadDocuments(proposalId) {
-  // For now, redirect to compliance matrix page
-  // In the future, this could open a dedicated upload modal
+  console.info('uploadDocuments() called with proposalId:', proposalId);
+  // Redirect to compliance matrix page where users can upload documents
   window.location.href = `/compliance-matrix/${proposalId}`;
 }
 
 async function runAgent(proposalId) {
+  console.info('runAgent() called with proposalId:', proposalId);
   try {
     showMessage('Running compliance matrix agent...', 'success');
     
+    console.info('Making API call to /api/agents/compliance-matrix/run (POST)');
     const result = await api('/api/agents/compliance-matrix/run', {
       method: 'POST',
       headers: {
@@ -494,11 +548,27 @@ async function runAgent(proposalId) {
       })
     });
     
+    console.info('Agent run completed:', result);
     showMessage(`Agent completed! Found ${result.total_requirements} requirements`, 'success');
     loadProposals(); // Refresh to show updated counts
   } catch (error) {
     console.error('Failed to run agent:', error);
     showMessage(`Agent failed: ${error.message}`, 'error');
+  }
+}
+
+async function deleteProposal(proposalId, proposalName) {
+  console.info('deleteProposal() called with proposalId:', proposalId);
+  if (confirm(`Are you sure you want to delete the proposal "${proposalName}"? This action cannot be undone.`)) {
+    try {
+      showMessage('Deleting proposal...', 'info');
+      await api(`/api/agents/compliance-matrix/proposals/${proposalId}`, { method: 'DELETE' });
+      showMessage('Proposal deleted successfully!', 'success');
+      loadProposals();
+    } catch (error) {
+      console.error('Failed to delete proposal:', error);
+      showMessage(`Failed to delete proposal: ${error.message}`, 'error');
+    }
   }
 }
 

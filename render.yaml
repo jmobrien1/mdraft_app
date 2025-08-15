@@ -4,7 +4,7 @@ services:
     env: python
     buildCommand: pip install -r requirements.txt
     runtime: python-3.11.11
-    preDeployCommand: bash scripts/migration_sentry.sh
+    preDeployCommand: bash scripts/migration_sentry.sh  # Runs flask db upgrade before serving
     startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 2 --threads 8 --timeout 120 wsgi:app
     healthCheckPath: /health
     envVars:
@@ -16,6 +16,7 @@ services:
         sync: false
       - key: SECRET_KEY
         generateValue: true
+        # Note: This generates a stable secret key that persists across deployments
       - key: MDRAFT_PUBLIC_MODE
         value: "0"
       - key: LOGIN_DISABLED
@@ -58,7 +59,7 @@ services:
     env: python
     buildCommand: pip install -r requirements.txt
     runtime: python-3.11.11
-    preDeployCommand: bash scripts/migration_sentry.sh
+    preDeployCommand: bash scripts/migration_sentry.sh  # Runs flask db upgrade before serving
     startCommand: celery -A celery_worker.celery worker --loglevel=info --pool=threads --concurrency=4 --without-gossip --without-mingle
     envVars:
       - key: FLASK_APP

@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import logging
 import os
+import uuid
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict, Any
 
 from . import db
 from .models import User, Job
@@ -50,8 +51,42 @@ def get_task_queue(user_id: int) -> str:
     return 'mdraft_priority' if is_pro_user(user_id) else 'mdraft_default'
 
 
+def ping_task(message: str = "pong") -> Dict[str, Any]:
+    """Simple ping task for smoke testing worker connectivity.
+    
+    This task is used to verify that:
+    1. The worker can receive tasks
+    2. The worker can process tasks
+    3. The worker can return results
+    
+    Args:
+        message: Optional message to echo back
+        
+    Returns:
+        Dictionary with ping response
+    """
+    task_id = str(uuid.uuid4())
+    timestamp = datetime.utcnow().isoformat()
+    
+    logger.info(f"Ping task received: {message}", extra={
+        'task_id': task_id,
+        'timestamp': timestamp
+    })
+    
+    return {
+        'status': 'success',
+        'message': message,
+        'task_id': task_id,
+        'timestamp': timestamp,
+        'worker_id': os.getenv('CELERY_WORKER_ID', 'unknown')
+    }
+
+
 def convert_document(job_id: int, user_id: int, gcs_uri: str) -> dict:
     """Convert document using Celery task.
+    
+    This task is idempotent - if the job is already completed, it will
+    return the existing result without reprocessing.
     
     Args:
         job_id: Database job ID
@@ -62,7 +97,6 @@ def convert_document(job_id: int, user_id: int, gcs_uri: str) -> dict:
         Dictionary with conversion results
     """
     # Set task metadata for logging
-    import uuid
     task_id = str(uuid.uuid4())
     conversion_id = f"conv_{job_id}_{task_id[:8]}"
     
@@ -75,13 +109,28 @@ def convert_document(job_id: int, user_id: int, gcs_uri: str) -> dict:
     })
     
     try:
-        # Update job status to processing
+        # Check if job already completed (idempotence)
         job = db.session.get(Job, job_id)
         if not job:
             raise ValueError(f"Job {job_id} not found")
         
+        if job.status == "completed":
+            logger.info(f"Job {job_id} already completed, returning existing result")
+            return {
+                'status': 'completed',
+                'job_id': job_id,
+                'output_uri': job.output_uri,
+                'conversion_id': conversion_id,
+                'note': 'already_completed'
+            }
+        
+        if job.status == "failed":
+            logger.info(f"Job {job_id} previously failed, retrying")
+        
+        # Update job status to processing
         job.status = "processing"
         job.started_at = db.func.now()
+        job.error_message = None  # Clear previous error
         db.session.commit()
         
         # Process the document

@@ -367,7 +367,8 @@ def create_app() -> Flask:
         # Map common errors
         default = "server_error"
         name = getattr(e, "name", default) or default
-        return jsonify({"error": name, "cid": cid}), code
+        request_id = request.environ.get('X-Request-ID', 'unknown')
+        return jsonify({"error": name, "cid": cid, "request_id": request_id}), code
 
     # Add friendly error handlers (JSON for /api, HTML for UI)
     def _wants_json():
@@ -375,28 +376,33 @@ def create_app() -> Flask:
 
     @app.errorhandler(400)
     def _bad_request(e):
-        return (jsonify(error="bad_request", detail=str(e)), 400) if _wants_json() \
+        request_id = request.environ.get('X-Request-ID', 'unknown')
+        return (jsonify(error="bad_request", detail=str(e), request_id=request_id), 400) if _wants_json() \
                else (render_template("errors/400.html"), 400)
 
     @app.errorhandler(404)
     def _not_found(e):
-        return (jsonify(error="not_found"), 404) if _wants_json() \
+        request_id = request.environ.get('X-Request-ID', 'unknown')
+        return (jsonify(error="not_found", request_id=request_id), 404) if _wants_json() \
                else (render_template("errors/404.html"), 404)
 
     @app.errorhandler(413)  # payload too large
     def _too_large(e):
-        return (jsonify(error="payload_too_large"), 413) if _wants_json() \
+        request_id = request.environ.get('X-Request-ID', 'unknown')
+        return (jsonify(error="payload_too_large", request_id=request_id), 413) if _wants_json() \
                else (render_template("errors/413.html"), 413)
 
     @app.errorhandler(429)
     def _too_many(e):
         # Keep your existing limiter 429 handler if defined; otherwise:
-        return (jsonify(error="rate_limited", detail=str(e.description)), 429) if _wants_json() \
+        request_id = request.environ.get('X-Request-ID', 'unknown')
+        return (jsonify(error="rate_limited", detail=str(e.description), request_id=request_id), 429) if _wants_json() \
                else ("Rate limit exceeded. Try again shortly.", 429)
 
     @app.errorhandler(500)
     def _server_error(e):
-        return (jsonify(error="server_error"), 500) if _wants_json() \
+        request_id = request.environ.get('X-Request-ID', 'unknown')
+        return (jsonify(error="server_error", request_id=request_id), 500) if _wants_json() \
                else (render_template("errors/500.html"), 500)
 
     return app

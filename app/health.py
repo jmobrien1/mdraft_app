@@ -108,15 +108,16 @@ def readyz() -> tuple[Dict[str, Any], int]:
 
 @bp.get("/health")
 def health() -> tuple[Dict[str, Any], int]:
-    """Legacy health check endpoint for backward compatibility.
+    """Lightweight health check endpoint.
     
-    This endpoint performs a database connectivity check and is kept
-    for backward compatibility with existing monitoring systems.
+    This endpoint executes a lightweight DB query and returns {status:'ok'}.
+    Used by monitoring systems for basic health checks.
     
     Returns:
         JSON response with status information
     """
     try:
+        # Execute lightweight DB query
         db.session.execute(text("SELECT 1"))
         return jsonify({"status": "ok"}), 200
     except Exception as e:

@@ -1,9 +1,22 @@
 import os
+import logging
 from celery import Celery
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 def make_celery():
     broker = os.getenv("CELERY_BROKER_URL", "")
     backend = os.getenv("CELERY_RESULT_BACKEND") or broker or None
+    
+    # Log connection details for debugging
+    logger.info(f"Initializing Celery with broker: {broker}")
+    logger.info(f"Result backend: {backend}")
+    
+    if not broker:
+        logger.warning("CELERY_BROKER_URL not set - worker may not function properly")
+    
     c = Celery("mdraft", broker=broker or None, backend=backend)
     
     # Set default queue
@@ -12,7 +25,7 @@ def make_celery():
     c.conf.task_default_routing_key = 'mdraft_default'
     
     # TLS for rediss://
-    if broker.startswith("rediss://"):
+    if broker and broker.startswith("rediss://"):
         c.conf.broker_use_ssl = {"ssl_cert_reqs": "none"}
         c.conf.redis_backend_use_ssl = {"ssl_cert_reqs": "none"}
     
@@ -25,6 +38,10 @@ def make_celery():
         'app.celery_tasks.convert_document': {
             'queue': 'mdraft_priority',
             'routing_key': 'mdraft_priority',
+        },
+        'app.celery_tasks.ping_task': {
+            'queue': 'mdraft_default',
+            'routing_key': 'mdraft_default',
         }
     }
     
@@ -36,8 +53,57 @@ def make_celery():
         },
     }
     
+    # Register tasks explicitly
+    c.autodiscover_tasks(['app.celery_tasks'])
+    
     return c
 
 celery = make_celery()
 
-# Tasks are registered dynamically when needed
+# Register tasks explicitly to ensure they're available
+@celery.task
+def ping_task(message: str = "pong"):
+    """Ping task for smoke testing worker connectivity."""
+    from app.celery_tasks import ping_task as ping_func
+    return ping_func(message)
+
+@celery.task
+def convert_document(job_id: int, user_id: int, gcs_uri: str):
+    """Convert document task with idempotence."""
+    from app.celery_tasks import convert_document as convert_func
+    return convert_func(job_id, user_id, gcs_uri)
+
+@celery.task
+def daily_cleanup_task():
+    """Daily cleanup task."""
+    from app.celery_tasks import daily_cleanup_task as cleanup_func
+    return cleanup_func()
+
+# Test broker connection on startup
+def test_broker_connection():
+    """Test broker connection and log diagnostics."""
+    try:
+        broker = os.getenv("CELERY_BROKER_URL", "")
+        if not broker:
+            logger.error("CELERY_BROKER_URL not set")
+            return False
+        
+        logger.info(f"Testing broker connection: {broker}")
+        
+        # Try to connect to broker
+        from celery import current_app
+        app = current_app._get_current_object()
+        
+        with app.connection() as conn:
+            conn.ensure_connection(max_retries=3)
+            logger.info("Broker connection successful")
+            return True
+            
+    except Exception as e:
+        logger.error(f"Broker connection failed: {e}")
+        logger.error("Worker will not function properly without broker connection")
+        return False
+
+# Run connection test on import
+if __name__ != "__main__":
+    test_broker_connection()

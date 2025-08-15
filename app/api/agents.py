@@ -133,10 +133,10 @@ def create_proposal() -> Any:
             return jsonify({"error": "Request body is required"}), 400
         
         name = data.get("name")
-        if not name:
-            return jsonify({"error": "name is required"}), 400
+        if not name or not name.strip():
+            return jsonify({"error": "name is required and cannot be empty"}), 400
         
-        description = data.get("description")
+        description = data.get("description", "").strip()
         
         # Get owner ID for creation (authenticated users only)
         from ..auth.ownership import get_owner_id_for_creation
@@ -150,7 +150,7 @@ def create_proposal() -> Any:
         from ..models import Proposal
         
         proposal = Proposal(
-            name=name,
+            name=name.strip(),
             description=description,
             status="active",
             user_id=owner_id
@@ -174,6 +174,7 @@ def create_proposal() -> Any:
         
     except Exception as e:
         logger.error(f"Failed to create proposal: {e}")
+        db.session.rollback()
         return jsonify({"error": str(e)}), 500
 
 
@@ -239,6 +240,58 @@ def list_proposals() -> Any:
         return jsonify({"error": str(e)}), 500
 
 
+@bp.route("/compliance-matrix/proposals/<int:proposal_id>/documents", methods=["GET"])
+@login_required
+def get_proposal_documents(proposal_id: int) -> Any:
+    """Get all documents for a proposal.
+    
+    Returns:
+    {
+        "documents": [
+            {
+                "id": 456,
+                "filename": "RFP-2024-001.pdf",
+                "document_type": "main_rfp",
+                "created_at": "2024-01-01T00:00:00Z"
+            }
+        ]
+    }
+    """
+    try:
+        # Get owner filter and validate proposal access
+        from ..auth.ownership import get_owner_filter
+        from ..auth.visitor import get_or_create_visitor_session_id
+        
+        if not getattr(current_user, "is_authenticated", False):
+            resp = make_response()
+            vid, resp = get_or_create_visitor_session_id(resp)
+        
+        owner_filter = get_owner_filter()
+        proposal = Proposal.query.filter_by(id=proposal_id, **owner_filter).first()
+        if not proposal:
+            return jsonify({"error": "Proposal not found or access denied"}), 404
+        
+        # Get documents for the proposal
+        documents = ProposalDocument.query.filter_by(proposal_id=proposal_id).all()
+        
+        result = []
+        for doc in documents:
+            result.append({
+                "id": doc.id,
+                "filename": doc.filename,
+                "document_type": doc.document_type,
+                "created_at": doc.created_at.isoformat()
+            })
+        
+        return jsonify({
+            "documents": result
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Failed to get proposal documents: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @bp.route("/compliance-matrix/proposals/<int:proposal_id>/documents", methods=["POST"])
 @login_required
 def add_document_to_proposal(proposal_id: int) -> Any:
@@ -246,17 +299,23 @@ def add_document_to_proposal(proposal_id: int) -> Any:
     
     This endpoint handles file upload and document processing for proposals.
     
-    Request: multipart/form-data
-    - file: The document file
+    Request: multipart/form-data OR JSON
+    - file: The document file (for direct upload)
     - document_type: Type of document (main_rfp, pws, soo, spec, etc.)
+    - conversion_id: ID of existing conversion (alternative to file upload)
+    - conversion_ids: Array of conversion IDs (for bulk attachment)
     
     Returns:
     {
-        "id": 456,
-        "filename": "RFP-2024-001.pdf",
-        "document_type": "main_rfp",
-        "status": "processing",
-        "created_at": "2024-01-01T00:00:00Z"
+        "attached": [
+            {
+                "id": 456,
+                "filename": "RFP-2024-001.pdf",
+                "document_type": "main_rfp",
+                "status": "completed",
+                "created_at": "2024-01-01T00:00:00Z"
+            }
+        ]
     }
     """
     try:
@@ -268,7 +327,78 @@ def add_document_to_proposal(proposal_id: int) -> Any:
         if not proposal:
             return jsonify({"error": "Proposal not found or access denied"}), 404
         
-        # Check for file upload
+        attached_documents = []
+        
+        # Check if this is a bulk attachment of existing conversions
+        if request.is_json:
+            data = request.get_json()
+            conversion_ids = data.get("conversion_ids", [])
+            single_conversion_id = data.get("conversion_id")
+            
+            if single_conversion_id:
+                conversion_ids = [single_conversion_id]
+            
+            if conversion_ids:
+                # Attach existing conversions
+                from ..models_conversion import Conversion
+                
+                for conv_id in conversion_ids:
+                    try:
+                        conv_id = str(conv_id).strip()
+                        conversion = Conversion.query.get(conv_id)
+                        
+                        if not conversion:
+                            continue
+                        
+                        # Check ownership
+                        if not (conversion.user_id == proposal.user_id or 
+                               conversion.visitor_session_id == proposal.visitor_session_id):
+                            continue
+                        
+                        document_type = data.get("document_type", "main_rfp")
+                        
+                        # Check for existing association (idempotence)
+                        existing_doc = ProposalDocument.query.filter_by(
+                            proposal_id=proposal_id,
+                            filename=conversion.filename
+                        ).first()
+                        
+                        if existing_doc:
+                            # Document already attached - return existing
+                            attached_documents.append({
+                                "id": existing_doc.id,
+                                "filename": existing_doc.filename,
+                                "document_type": existing_doc.document_type,
+                                "status": "already_attached",
+                                "created_at": existing_doc.created_at.isoformat()
+                            })
+                            continue
+                        
+                        # Add document to proposal
+                        rfp_data_layer = RFPDataLayer()
+                        doc = rfp_data_layer.add_document_to_proposal(
+                            proposal_id=proposal_id,
+                            filename=conversion.filename,
+                            document_type=document_type,
+                            gcs_uri=conversion.stored_uri,
+                            parsed_text=conversion.markdown
+                        )
+                        
+                        attached_documents.append({
+                            "id": doc.id,
+                            "filename": doc.filename,
+                            "document_type": doc.document_type,
+                            "status": "completed",
+                            "created_at": doc.created_at.isoformat()
+                        })
+                        
+                    except Exception as e:
+                        logger.error(f"Failed to attach conversion {conv_id}: {e}")
+                        continue
+                
+                return jsonify({"attached": attached_documents}), 201
+        
+        # Handle file upload (existing logic)
         if "file" not in request.files:
             return jsonify({"error": "No file provided"}), 400
         
@@ -277,6 +407,8 @@ def add_document_to_proposal(proposal_id: int) -> Any:
             return jsonify({"error": "No file selected"}), 400
         
         document_type = request.form.get("document_type", "main_rfp")
+        if not document_type or not document_type.strip():
+            return jsonify({"error": "document_type is required"}), 400
         
         # Process the file using existing conversion pipeline
         from ..utils import generate_job_id, is_file_allowed
@@ -321,25 +453,29 @@ def add_document_to_proposal(proposal_id: int) -> Any:
             doc = rfp_data_layer.add_document_to_proposal(
                 proposal_id=proposal_id,
                 filename=filename,
-                document_type=document_type,
+                document_type=document_type.strip(),
                 gcs_uri=gcs_uri,
                 parsed_text=markdown_content
             )
             
-            return jsonify({
+            attached_documents.append({
                 "id": doc.id,
                 "filename": doc.filename,
                 "document_type": doc.document_type,
                 "status": "completed",
                 "created_at": doc.created_at.isoformat()
-            }), 201
+            })
+            
+            return jsonify({"attached": attached_documents}), 201
             
         except Exception as e:
             logger.error(f"Failed to process document: {e}")
+            db.session.rollback()
             return jsonify({"error": f"Document processing failed: {str(e)}"}), 500
         
     except Exception as e:
         logger.error(f"Failed to add document to proposal: {e}")
+        db.session.rollback()
         return jsonify({"error": str(e)}), 500
 
 
@@ -397,26 +533,26 @@ def get_proposal_requirements(proposal_id: int) -> Any:
         
         requirements = query.order_by(Requirement.requirement_id).all()
         
-        result = {
-            "proposal_id": proposal_id,
-            "total_requirements": len(requirements),
-            "requirements": [
-                {
-                    "id": req.requirement_id,
-                    "text": req.requirement_text,
-                    "section_ref": req.section_ref,
-                    "page_number": req.page_number,
-                    "source_document": req.source_document,
-                    "assigned_owner": req.assigned_owner,
-                    "status": req.status,
-                    "notes": req.notes,
-                    "created_at": req.created_at.isoformat()
-                }
-                for req in requirements
-            ]
-        }
+        # Build response
+        result = []
+        for req in requirements:
+            result.append({
+                "id": req.requirement_id,
+                "text": req.requirement_text,
+                "section_ref": req.section_ref,
+                "page_number": req.page_number,
+                "source_document": req.source_document,
+                "assigned_owner": req.assigned_owner,
+                "status": req.status,
+                "notes": req.notes,
+                "created_at": req.created_at.isoformat()
+            })
         
-        return jsonify(result), 200
+        return jsonify({
+            "proposal_id": proposal_id,
+            "total_requirements": len(result),
+            "requirements": result
+        }), 200
         
     except Exception as e:
         logger.error(f"Failed to get proposal requirements: {e}")
@@ -658,3 +794,140 @@ def _export_pdf(requirements: List[Requirement], proposal_name: str) -> Any:
         
     except ImportError:
         return jsonify({"error": "PDF export requires reportlab package"}), 500
+
+
+@bp.route("/compliance-matrix/proposals/<int:proposal_id>", methods=["GET"])
+@login_required
+def get_proposal_detail(proposal_id: int) -> Any:
+    """Get detailed information about a specific proposal.
+    
+    Returns:
+    {
+        "id": 123,
+        "name": "RFP-2024-001",
+        "description": "Software development services RFP",
+        "status": "active",
+        "user_id": 456,
+        "visitor_session_id": null,
+        "document_count": 3,
+        "requirement_count": 45,
+        "created_at": "2024-01-01T00:00:00Z",
+        "updated_at": "2024-01-01T00:00:00Z",
+        "is_anonymous": false
+    }
+    """
+    try:
+        # Get owner filter and validate proposal access
+        from ..auth.ownership import get_owner_filter
+        
+        owner_filter = get_owner_filter()
+        proposal = Proposal.query.filter_by(id=proposal_id, **owner_filter).first()
+        if not proposal:
+            return jsonify({"error": "Proposal not found or access denied"}), 404
+        
+        # Get document and requirement counts
+        doc_count = ProposalDocument.query.filter_by(proposal_id=proposal.id).count()
+        req_count = Requirement.query.filter_by(proposal_id=proposal.id).count()
+        
+        result = {
+            "id": proposal.id,
+            "name": proposal.name,
+            "description": proposal.description,
+            "status": proposal.status,
+            "user_id": proposal.user_id,
+            "visitor_session_id": proposal.visitor_session_id,
+            "document_count": doc_count,
+            "requirement_count": req_count,
+            "created_at": proposal.created_at.isoformat(),
+            "updated_at": proposal.updated_at.isoformat(),
+            "is_anonymous": proposal.user_id is None
+        }
+        
+        return jsonify(result), 200
+        
+    except Exception as e:
+        logger.error(f"Failed to get proposal detail: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@bp.route("/compliance-matrix/proposals/<int:proposal_id>", methods=["DELETE"])
+@login_required
+def delete_proposal(proposal_id: int) -> Any:
+    """Delete a proposal and all its associated documents and requirements.
+    
+    Returns:
+    {
+        "status": "success",
+        "message": "Proposal deleted successfully"
+    }
+    """
+    try:
+        # Get owner filter and validate proposal access
+        from ..auth.ownership import get_owner_filter
+        
+        owner_filter = get_owner_filter()
+        proposal = Proposal.query.filter_by(id=proposal_id, **owner_filter).first()
+        if not proposal:
+            return jsonify({"error": "Proposal not found or access denied"}), 404
+        
+        # Delete the proposal (cascade will handle documents and requirements)
+        db.session.delete(proposal)
+        db.session.commit()
+        
+        logger.info(f"Proposal {proposal_id} deleted successfully")
+        return jsonify({
+            "status": "success",
+            "message": "Proposal deleted successfully"
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Failed to delete proposal: {e}")
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+
+@bp.route("/compliance-matrix/proposals/<int:proposal_id>/documents/<int:document_id>", methods=["DELETE"])
+@login_required
+def detach_document_from_proposal(proposal_id: int, document_id: int) -> Any:
+    """Detach a document from a proposal.
+    
+    This endpoint removes the association between a document and a proposal.
+    The document file itself is not deleted from storage.
+    
+    Returns:
+    {
+        "status": "success",
+        "message": "Document detached successfully"
+    }
+    """
+    try:
+        # Get owner filter and validate proposal access
+        from ..auth.ownership import get_owner_filter
+        
+        owner_filter = get_owner_filter()
+        proposal = Proposal.query.filter_by(id=proposal_id, **owner_filter).first()
+        if not proposal:
+            return jsonify({"error": "Proposal not found or access denied"}), 404
+        
+        # Find the document within this proposal
+        document = ProposalDocument.query.filter_by(
+            id=document_id, 
+            proposal_id=proposal_id
+        ).first()
+        if not document:
+            return jsonify({"error": "Document not found in this proposal"}), 404
+        
+        # Delete the document (this removes the association)
+        db.session.delete(document)
+        db.session.commit()
+        
+        logger.info(f"Document {document_id} detached from proposal {proposal_id}")
+        return jsonify({
+            "status": "success",
+            "message": "Document detached successfully"
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Failed to detach document: {e}")
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
