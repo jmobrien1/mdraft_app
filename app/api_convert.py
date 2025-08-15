@@ -9,6 +9,7 @@ from . import db, limiter
 from .models_conversion import Conversion
 from .security import sniff_category, size_ok
 from .auth_api import require_api_key_if_configured, rate_limit_for_convert, rate_limit_key_func
+from .utils.authz import allow_session_or_api_key
 from .quality import sha256_file, clean_markdown, pdf_text_fallback
 from .webhooks import deliver_webhook
 from .utils import is_file_allowed
@@ -81,7 +82,8 @@ def _convert_with_markitdown(path: str) -> str:
 @bp.post("/convert")
 @limiter.limit(rate_limit_for_convert, key_func=rate_limit_key_func)
 def api_convert():
-    require_api_key_if_configured()
+    if not allow_session_or_api_key():
+        return jsonify({"error": "unauthorized"}), 401
     
     # Validate multipart first
     file = request.files.get("file")

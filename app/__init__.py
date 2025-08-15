@@ -29,6 +29,9 @@ from flask_bcrypt import Bcrypt
 from flask_login import LoginManager
 from sqlalchemy import text
 
+# Import middleware
+from .middleware.logging import init_request_logging
+
 # Initialise extensions without an application context.  They will be
 # bound to the app inside create_app().
 db: SQLAlchemy = SQLAlchemy()
@@ -187,6 +190,9 @@ def create_app() -> Flask:
         # HSTS (ok behind Render's TLS)
         resp.headers.setdefault("Strict-Transport-Security", "max-age=15552000; includeSubDomains; preload")
         return resp
+
+    # Initialize request logging middleware
+    init_request_logging(app)
 
     # Initialise extensions
     db.init_app(app)

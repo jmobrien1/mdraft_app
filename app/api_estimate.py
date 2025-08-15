@@ -14,6 +14,7 @@ from typing import Any
 from flask import Blueprint, jsonify, request
 from pypdf import PdfReader
 from .utils import is_file_allowed
+from .utils.authz import allow_session_or_api_key
 
 
 bp = Blueprint("estimate_api", __name__, url_prefix="/api")
@@ -103,6 +104,9 @@ def estimate() -> Any:
     Returns:
         JSON response with filetype, pages, and estimated cost
     """
+    if not allow_session_or_api_key():
+        return jsonify({"error": "unauthorized"}), 401
+    
     # Validate multipart first
     file = request.files.get("file")
     if not file or file.filename == "":

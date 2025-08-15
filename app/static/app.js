@@ -1,3 +1,7 @@
+// API Contract: api() returns parsed JSON (not Response object)
+// This prevents confusion with 'res' variable usage after api() calls
+window.__mdraftApiContract__ = 'api() returns JSON (not Response)';
+
 export function toast(msg, ms=1500){
   let t = document.querySelector(".toast"); if(!t){ t = document.createElement("div"); t.className="toast"; document.body.appendChild(t); }
   t.textContent = msg; t.classList.add("show");

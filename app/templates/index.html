@@ -17,11 +17,7 @@
         <button id="btn" class="btn" type="submit">Convert</button>
         <span id="status" class="hint">Idle</span>
       </div>
-      <div class="row" style="margin-top:8px;">
-        <input id="apiKey" class="input" placeholder="API key (optional)"/>
-        <button class="btn secondary" id="saveKey" type="button">Save key</button>
-        <span id="keyStatus" class="hint"></span>
-      </div>
+
     </form>
   </div>
 
@@ -75,14 +71,7 @@
   const drop = document.getElementById('drop');
   const chosen = document.getElementById('chosen');
 
-  const apiKeyInput = document.getElementById('apiKey');
-  const keyStatus = document.getElementById('keyStatus');
-  const savedKey = localStorage.getItem('apiKey') || '';
-  if (savedKey) { apiKeyInput.value = savedKey; keyStatus.textContent = 'Using saved key'; }
-  document.getElementById('saveKey').onclick = ()=>{
-    localStorage.setItem('apiKey', apiKeyInput.value.trim());
-    keyStatus.textContent = apiKeyInput.value.trim() ? 'Key saved' : 'Key cleared';
-  };
+
 
   pick.addEventListener('click', ()=> file.click());
   dragAndDrop(file, drop);
@@ -162,14 +151,13 @@
 
   async function apiPostJSON(url, body) {
     const headers = {'Content-Type':'application/json'};
-    const k = (localStorage.getItem('apiKey') || '').trim();
-    if (k) headers['X-API-Key'] = k;
     
     try {
       return await api(url, {
         method: 'POST',
         headers,
-        body: JSON.stringify(body || {})
+        body: JSON.stringify(body || {}),
+        credentials: 'same-origin'
       });
     } catch (error) {
       throw { http: 500, text: error.message };
@@ -305,10 +293,7 @@
     btn.disabled = true; statusEl.textContent = 'Uploading…';
 
     try{
-      const headers = {};
-      const k = (localStorage.getItem('apiKey') || '').trim();
-      if (k) headers['X-API-Key'] = k;
-      const json = await api('/api/convert', { method: 'POST', body: fd, headers });
+      const json = await api('/api/convert', { method: 'POST', body: fd, credentials: 'same-origin' });
       
       // Log upload response for debugging
       console.log('[mdraft] upload response:', json);
@@ -328,7 +313,7 @@
       
       const data = json;
       
-      if (res.status === 202 && data.status === "QUEUED"){
+      if (data.status === "QUEUED"){
         statusEl.textContent = 'Queued…';
         const poll = async ()=>{
           const j = await api(data.links.self);
@@ -353,7 +338,7 @@
             setTimeout(poll, 1200);
           }
         }; poll();
-      } else if (res.ok) {
+      } else {
         statusEl.textContent = 'Done';
         if (data.markdown) {
           out.value = data.markdown;
@@ -363,11 +348,6 @@
           out.value = ""; // nothing? keep empty
         }
         toast("Done"); await (window.loadRecent && window.loadRecent());
-      } else {
-        statusEl.textContent = 'Error';
-        out.value = JSON.stringify(data);
-        disableFreeTools();
-        toast("Error", 2000);
       }
     }catch(err){
       statusEl.textContent = 'Network error'; out.value = String(err); disableFreeTools(); toast("Network error", 2000);
@@ -388,7 +368,7 @@
 // Load recent conversions (global so other scripts/HTML can call it)
 window.loadRecent = async function loadRecent() {
   try {
-    const data = await api('/api/conversions?limit=10', { headers: { 'Accept': 'application/json' }});
+    const data = await api('/api/conversions?limit=10', { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' });
     // ⬇️ keep the existing DOM rendering for the recent list here, unchanged
     const el = document.getElementById('recent');
     el.innerHTML = '';
@@ -459,21 +439,12 @@ window.loadRecent && window.loadRecent();
     try {
       const fd = new FormData();
       fd.append('file', file, file.name);
-      const res = await api('/api/estimate', {
+      const data = await api('/api/estimate', {
         method: 'POST',
         body: fd,
         headers: { 'Accept': 'application/json' },
         credentials: 'same-origin',
       });
-      // Handle non-OK or non-JSON responses safely
-      const ct = (res.headers.get('content-type') || '').toLowerCase();
-      if (!res.ok || !ct.includes('application/json')) {
-        const text = await res.text();
-        console.warn('Estimate non-JSON or error', res.status, ct, text.slice(0,200));
-        line.textContent = (res.status === 413) ? 'File too large for estimate.' : 'Estimate unavailable.';
-        return;
-      }
-      const data = await res.json();
       if (!data || typeof data.pages !== 'number') { line.textContent = 'Estimate unavailable.'; return; }
       line.textContent = `Estimate: ~${data.pages} premium pages → ~$${data.est_cost_usd} (not billed until run).`;
     } catch (err) {

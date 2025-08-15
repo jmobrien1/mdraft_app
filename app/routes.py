@@ -24,6 +24,7 @@ from .services import Storage
 from .celery_tasks import enqueue_conversion_task
 from .services.ai_tools import run_prompt
 from .services.text_loader import get_rfp_text
+from .utils.authz import allow_session_or_api_key
 from .schemas.free_capabilities import (
     COMPLIANCE_MATRIX_SCHEMA,
     EVAL_CRITERIA_SCHEMA,
@@ -321,6 +322,9 @@ def _stub_on() -> bool:
 @limiter.limit(os.getenv("AI_RATE_LIMIT_DEFAULT", "10 per minute"))
 def generate_compliance_matrix() -> Any:
     """Generate compliance matrix from RFP document."""
+    if not allow_session_or_api_key():
+        return jsonify({"error": "unauthorized"}), 401
+    
     data = request.get_json(silent=True) or {}
     doc_id = data.get('document_id') or data.get('id')
     if not isinstance(doc_id, str) or not doc_id.strip():
@@ -389,6 +393,9 @@ def generate_compliance_matrix() -> Any:
 @limiter.limit(os.getenv("AI_RATE_LIMIT_DEFAULT", "10 per minute"))
 def generate_evaluation_criteria() -> Any:
     """Generate evaluation criteria from RFP document."""
+    if not allow_session_or_api_key():
+        return jsonify({"error": "unauthorized"}), 401
+    
     data = request.get_json(silent=True) or {}
     doc_id = data.get('document_id') or data.get('id')
     if not isinstance(doc_id, str) or not doc_id.strip():
@@ -447,6 +454,9 @@ def generate_evaluation_criteria() -> Any:
 @limiter.limit(os.getenv("AI_RATE_LIMIT_DEFAULT", "10 per minute"))
 def generate_annotated_outline() -> Any:
     """Generate annotated outline from RFP document."""
+    if not allow_session_or_api_key():
+        return jsonify({"error": "unauthorized"}), 401
+    
     data = request.get_json(silent=True) or {}
     doc_id = data.get('document_id') or data.get('id')
     if not isinstance(doc_id, str) or not doc_id.strip():
@@ -505,6 +515,9 @@ def generate_annotated_outline() -> Any:
 @limiter.limit(os.getenv("AI_RATE_LIMIT_DEFAULT", "10 per minute"))
 def generate_submission_checklist() -> Any:
     """Generate submission checklist from RFP document."""
+    if not allow_session_or_api_key():
+        return jsonify({"error": "unauthorized"}), 401
+    
     data = request.get_json(silent=True) or {}
     doc_id = data.get('document_id') or data.get('id')
     if not isinstance(doc_id, str) or not doc_id.strip():
