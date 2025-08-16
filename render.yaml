@@ -6,9 +6,11 @@ services:
       pip install --no-cache-dir --upgrade pip
       pip install --no-cache-dir -r requirements-minimal.txt
     runtime: python-3.11.11
-    preDeployCommand: bash scripts/migration_sentry.sh  # Runs flask db upgrade before serving
+    preDeployCommand: |
+      python scripts/startup_validation.py
+      bash scripts/migration_sentry.sh  # Runs flask db upgrade before serving
     startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 2 --threads 8 --timeout 120 wsgi:app
-    healthCheckPath: /health
+    healthCheckPath: /health/simple
     envVars:
       - key: FLASK_ENV
         value: production

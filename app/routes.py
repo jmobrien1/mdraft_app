@@ -70,9 +70,19 @@ def health_check() -> Any:
         # text() ensures raw SQL execution without model imports.
         db.session.execute(text("SELECT 1"))
         return jsonify({"status": "ok"})
-    except Exception:  # noqa: BLE001
+    except Exception: # noqa: BLE001
         current_app.logger.exception("Database health check failed")
         return jsonify({"status": "database_error"}), 503
+
+
+@bp.route("/health/simple", methods=["GET"])
+def simple_health_check() -> Any:
+    """Simple health check that doesn't require database connectivity.
+    
+    This endpoint is useful for deployment health checks when the database
+    might not be available yet.
+    """
+    return jsonify({"status": "ok", "message": "Application is running"})
 
 
 @bp.get("/healthz")
