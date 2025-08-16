@@ -346,10 +346,10 @@ class AppConfig:
                 errors.append("DATABASE_URL is required in production")
             
             if not self.GCS_BUCKET_NAME:
-                errors.append("GCS_BUCKET_NAME is required in production")
+                errors.append("GCS_BUCKET_NAME is required in production. Set this environment variable to your GCS bucket name for uploaded files (e.g., 'mdraft-uploads-1974')")
             
             if not self.GCS_PROCESSED_BUCKET_NAME:
-                errors.append("GCS_PROCESSED_BUCKET_NAME is required in production")
+                errors.append("GCS_PROCESSED_BUCKET_NAME is required in production. Set this environment variable to your GCS bucket name for processed files (e.g., 'mdraft-processed-1974' or use the same bucket as GCS_BUCKET_NAME)")
             
             if self.billing.ENABLED:
                 if not self.STRIPE_SECRET_KEY:

@@ -4,10 +4,14 @@ set -Eeuo pipefail
 
 echo "=== MIGRATION SENTRY: starting ==="
 
+# Ensure PYTHONPATH is set for Render deployment
+export PYTHONPATH="${PYTHONPATH:-/opt/render/project/src}"
+export FLASK_APP="${FLASK_APP:-wsgi.py}"
+
 : "${DATABASE_URL:?DATABASE_URL is not set}"
 export SQLALCHEMY_DATABASE_URI="${SQLALCHEMY_DATABASE_URI:-$DATABASE_URL}"
-export FLASK_APP="${FLASK_APP:-run.py}"
 
+echo "PYTHONPATH=$PYTHONPATH"
 echo "FLASK_APP=$FLASK_APP"
 masked_host="$(echo "${DATABASE_URL#*://}" | cut -d@ -f2 | cut -d/ -f1)"
 masked_db="$(echo "${DATABASE_URL##*/}" | cut -d? -f1)"
