@@ -1,0 +1,48 @@
+# Minimal requirements for faster deployment builds
+# Core Flask dependencies
+Flask==3.0.3
+gunicorn==22.0.0
+python-dotenv==1.0.1
+flask-cors==4.0.1
+
+# Database and ORM
+Flask-SQLAlchemy==3.1.1
+Flask-Migrate==4.0.7
+alembic==1.13.1
+psycopg[binary]==3.2.9
+
+# Authentication and security
+Flask-Bcrypt==1.0.1
+Flask-Login==0.6.3
+Flask-Limiter==3.6.0
+Flask-WTF==1.2.1
+Flask-Session==0.7.0
+
+# Google Cloud services - Core only
+google-cloud-storage==2.18.2
+google-cloud-tasks==2.16.0
+google-cloud-secret-manager==2.19.0
+google-auth==2.26.1
+google-api-core==2.15.0
+
+# Async task processing
+celery==5.4.0
+redis==5.0.7
+
+# File processing and utilities - Core only
+filetype==1.2.0
+requests==2.32.3
+jsonschema==4.18.0
+
+# Reliability engineering
+tenacity==9.1.2
+
+# Security-critical packages
+itsdangerous==2.1.2
+Werkzeug==3.0.1
+
+# Monitoring and observability
+sentry-sdk[flask]==2.9.0
+
+# Note: Heavy dependencies like onnxruntime, azure-ai-documentintelligence, 
+# markitdown, etc. are excluded for faster builds. Add them back if needed.

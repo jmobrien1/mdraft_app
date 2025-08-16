@@ -45,29 +45,29 @@ PY
 
 echo "=== MIGRATION SENTRY: flask db upgrade ==="
 set +e
-flask db upgrade
+timeout 300 flask db upgrade  # 5 minute timeout
 rc=$?
 set -e
 if [[ $rc -ne 0 ]]; then
-  echo "=== MIGRATION SENTRY: upgrade failed; attempting auto-repair (unknown revision / chain break) ==="
+  echo "=== MIGRATION SENTRY: upgrade failed (rc=$rc); attempting auto-repair ==="
 
   # Use Flask-Migrate stamping (inside app context), NOT raw 'alembic'
   set +e
-  flask db stamp base
+  timeout 60 flask db stamp base  # 1 minute timeout
   rc_stamp=$?
   set -e
   if [[ $rc_stamp -ne 0 ]]; then
-    echo "[SENTRY] WARN: 'flask db stamp base' failed; proceeding anyway."
+    echo "[SENTRY] WARN: 'flask db stamp base' failed (rc=$rc_stamp); proceeding anyway."
   fi
 
   echo "=== MIGRATION SENTRY: retry flask db upgrade ==="
   set +e
-  flask db upgrade
+  timeout 300 flask db upgrade  # 5 minute timeout
   rc2=$?
   set -e
 
   if [[ $rc2 -ne 0 ]]; then
-    echo "=== MIGRATION SENTRY: upgrade still failing; applying guarded DDL minimums, then stamping head ==="
+    echo "=== MIGRATION SENTRY: upgrade still failing (rc=$rc2); applying guarded DDL minimums ==="
 
     # --- Guarded DDL (fix proposals + conversions) ---
     python - <<'PY'
@@ -115,11 +115,11 @@ PY
 
     # Stamp to repository head using Flask-Migrate (inside app context)
     set +e
-    flask db stamp head
+    timeout 60 flask db stamp head  # 1 minute timeout
     rc_stamp_head=$?
     set -e
     if [[ $rc_stamp_head -ne 0 ]]; then
-      echo "[SENTRY] WARN: 'flask db stamp head' failed; will verify schema anyway."
+      echo "[SENTRY] WARN: 'flask db stamp head' failed (rc=$rc_stamp_head); will verify schema anyway."
     fi
   fi
 fi
