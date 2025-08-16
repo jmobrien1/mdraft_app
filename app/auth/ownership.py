@@ -51,7 +51,11 @@ def get_owner_filter() -> dict:
     if getattr(current_user, "is_authenticated", False) and current_user.id is not None:
         return {"user_id": current_user.id}
     else:
-        return {"user_id": None}  # No access for unauthenticated users
+        vid = get_visitor_session_id()
+        if vid:
+            return {"visitor_session_id": vid}
+        else:
+            return {"user_id": None}  # No access for unauthenticated users without session
 
 
 def validate_proposal_access(proposal) -> bool:

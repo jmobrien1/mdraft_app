@@ -47,9 +47,8 @@ def generate_job_id() -> str:
 def is_file_allowed(stream, filename: str = "") -> bool:
     """Check whether the uploaded file's MIME type is allowed.
 
-    This function performs robust file type detection using magic numbers
-    and file extensions. It includes special handling for DOCX files which
-    may be detected as ZIP files by magic number detection.
+    This function uses the new comprehensive validation system that includes
+    content-sniffing, size limits, and security checks.
 
     Args:
         stream: A file-like object supporting read() and seek().
@@ -58,82 +57,13 @@ def is_file_allowed(stream, filename: str = "") -> bool:
     Returns:
         True if the file is of an allowed type; False otherwise.
     """
-    logger = logging.getLogger(__name__)
+    from .utils.validation import validate_upload_file
     
-    # Always reset stream position before and after detection
-    stream.seek(0)
-    sample = stream.read(261)
-    stream.seek(0)
-    
-    # Get file extension (lowercase)
-    file_ext = os.path.splitext(filename)[1].lower() if filename else ""
-    
-    # Magic number detection
-    kind = filetype.guess(sample)
-    magic_mime = kind.mime if kind else None
-    
-    logger.info(f"File validation - Magic MIME: {magic_mime}, Extension: {file_ext}")
-    
-    # Primary check: Magic MIME is in allowed types
-    if magic_mime in ALLOWED_MIME_TYPES:
-        logger.info(f"File accepted via magic MIME match: {magic_mime}")
-        return True
-    
-    # Special handling for DOCX files
-    if file_ext == ".docx":
-        # Check if magic reports application/zip (DOCX is a ZIP container)
-        if magic_mime == "application/zip":
-            logger.info("DOCX detected via ZIP magic number")
-            return _validate_docx_structure(sample, stream, logger)
-        
-        # Check if magic is None but stream begins with ZIP signature
-        if magic_mime is None and len(sample) >= 2 and sample[:2] == b'PK':
-            logger.info("DOCX detected via ZIP signature (PK)")
-            return _validate_docx_structure(sample, stream, logger)
-    
-    # Secondary check: Extension is allowed when magic is inconclusive
-    if file_ext in ALLOWED_EXTENSIONS and magic_mime is None:
-        logger.info(f"File accepted via extension match (magic inconclusive): {file_ext}")
-        return True
-    
-    logger.info(f"File rejected - Magic: {magic_mime}, Extension: {file_ext}")
-    return False
+    result = validate_upload_file(stream, filename)
+    return result.is_valid
 
 
-def _validate_docx_structure(sample: bytes, stream, logger) -> bool:
-    """Validate that a ZIP file contains DOCX structure.
-    
-    This function checks if the ZIP file contains the expected DOCX
-    structure by looking for 'word/document.xml' entry.
-    
-    Args:
-        sample: Initial bytes from the file stream
-        stream: File stream (will be reset after validation)
-        logger: Logger instance for recording validation steps
-        
-    Returns:
-        True if DOCX structure is valid, False otherwise
-    """
-    try:
-        # Create a BytesIO object from the sample for ZIP validation
-        zip_data = BytesIO(sample)
-        
-        # Try to open as ZIP and check for DOCX structure
-        with zipfile.ZipFile(zip_data) as zip_file:
-            # Check if 'word/document.xml' exists in the ZIP
-            if 'word/document.xml' in zip_file.namelist():
-                logger.info("DOCX structure validated - found word/document.xml")
-                return True
-            else:
-                logger.info("ZIP file does not contain DOCX structure")
-                return False
-                
-    except zipfile.BadZipFile:
-        logger.info("File is not a valid ZIP archive")
-        return False
-    except Exception as e:
-        logger.warning(f"Error validating DOCX structure: {e}")
-        return False
+
 
 
 def generate_download_url(local_path: str, expires_in: int = 900) -> str:

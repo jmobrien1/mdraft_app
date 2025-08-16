@@ -11,12 +11,65 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 import uuid
+from enum import Enum
 
 from flask_login import UserMixin
-from sqlalchemy import Integer, String, DateTime, Text, ForeignKey, Boolean, CheckConstraint
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import Integer, String, DateTime, Text, ForeignKey, Boolean, CheckConstraint, Enum as SQLAlchemyEnum
+from sqlalchemy.orm import Mapped, mapped_column, relationship, selectinload, joinedload
 
 from . import db
+
+
+class JobStatus(Enum):
+    """Job status enum with state machine transitions."""
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+    @classmethod
+    def get_valid_transitions(cls, current_status: str) -> list[str]:
+        """Get valid next states for a given current status."""
+        transitions = {
+            cls.PENDING.value: [cls.PROCESSING.value, cls.CANCELLED.value],
+            cls.PROCESSING.value: [cls.COMPLETED.value, cls.FAILED.value],
+            cls.COMPLETED.value: [],  # Terminal state
+            cls.FAILED.value: [cls.PENDING.value],  # Allow retry
+            cls.CANCELLED.value: [],  # Terminal state
+        }
+        return transitions.get(current_status, [])
+
+    @classmethod
+    def is_valid_transition(cls, from_status: str, to_status: str) -> bool:
+        """Check if a state transition is valid."""
+        return to_status in cls.get_valid_transitions(from_status)
+
+
+class ConversionStatus(Enum):
+    """Conversion status enum with state machine transitions."""
+    QUEUED = "QUEUED"
+    PROCESSING = "PROCESSING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+
+    @classmethod
+    def get_valid_transitions(cls, current_status: str) -> list[str]:
+        """Get valid next states for a given current status."""
+        transitions = {
+            cls.QUEUED.value: [cls.PROCESSING.value, cls.CANCELLED.value],
+            cls.PROCESSING.value: [cls.COMPLETED.value, cls.FAILED.value],
+            cls.COMPLETED.value: [],  # Terminal state
+            cls.FAILED.value: [cls.QUEUED.value],  # Allow retry
+            cls.CANCELLED.value: [],  # Terminal state
+        }
+        return transitions.get(current_status, [])
+
+    @classmethod
+    def is_valid_transition(cls, from_status: str, to_status: str) -> bool:
+        """Check if a state transition is valid."""
+        return to_status in cls.get_valid_transitions(from_status)
 
 
 class User(UserMixin, db.Model):
@@ -32,11 +85,14 @@ class User(UserMixin, db.Model):
     plan: Mapped[str] = mapped_column(String(64), default="F&F", nullable=False)
     last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     revoked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    email_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     # Relationship to conversion jobs
-    jobs: Mapped[list[Job]] = relationship("Job", back_populates="user", cascade="all, delete-orphan")  # type: ignore
+    jobs: Mapped[list[Job]] = relationship("Job", back_populates="user", cascade="all, delete-orphan", foreign_keys="Job.user_id")  # type: ignore
+    # Relationship to email verification tokens
+    verification_tokens: Mapped[list[EmailVerificationToken]] = relationship("EmailVerificationToken", back_populates="user", cascade="all, delete-orphan")  # type: ignore
 
     @staticmethod
     def get_or_create_by_email(email: str):
@@ -96,9 +152,10 @@ class Job(db.Model):
     __tablename__ = "jobs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True)
+    visitor_session_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
-    status: Mapped[str] = mapped_column(String(64), default="pending", nullable=False)
+    status: Mapped[str] = mapped_column(SQLAlchemyEnum(JobStatus), default=JobStatus.PENDING, nullable=False)
     gcs_uri: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     output_uri: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -108,10 +165,31 @@ class Job(db.Model):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     # Relationship back to the owning user
-    user: Mapped[User] = relationship("User", back_populates="jobs")  # type: ignore
+    user: Mapped[Optional[User]] = relationship("User", back_populates="jobs")  # type: ignore
+
+    __table_args__ = (
+        # Ensure at least one owner dimension is present
+        CheckConstraint(
+            "(user_id IS NOT NULL) OR (visitor_session_id IS NOT NULL)",
+            name="ck_jobs_owner_present"
+        ),
+    )
+
+    def transition_status(self, new_status: str) -> None:
+        """Safely transition job status with validation."""
+        if not JobStatus.is_valid_transition(self.status.value, new_status):
+            raise ValueError(f"Invalid status transition from {self.status.value} to {new_status}")
+        
+        self.status = JobStatus(new_status)
+        
+        # Update timestamps based on status
+        if new_status == JobStatus.PROCESSING.value and not self.started_at:
+            self.started_at = datetime.utcnow()
+        elif new_status in [JobStatus.COMPLETED.value, JobStatus.FAILED.value]:
+            self.completed_at = datetime.utcnow()
 
     def __repr__(self) -> str:
-        return f"<Job {self.id} ({self.status})>"
+        return f"<Job {self.id} ({self.status.value})>"
 
 
 class Proposal(db.Model):
@@ -191,3 +269,22 @@ class Requirement(db.Model):
 
     def __repr__(self) -> str:
         return f"<Requirement {self.requirement_id} ({self.section_ref})>"
+
+
+class EmailVerificationToken(db.Model):
+    """Represent an email verification token for user account verification."""
+
+    __tablename__ = "email_verification_tokens"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    token: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    used: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Relationships
+    user: Mapped[User] = relationship("User", back_populates="verification_tokens")  # type: ignore
+
+    def __repr__(self) -> str:
+        return f"<EmailVerificationToken {self.token[:8]}... for user {self.user_id}>"

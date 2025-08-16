@@ -6,6 +6,10 @@ import json
 import logging
 from typing import Any, Dict, List, Optional
 from app.services.llm_client import chat_json
+from app.services.prompt_sanitization import (
+    sanitize_for_prompt, sanitize_prompt_template, 
+    sanitize_and_validate_output, validate_json_schema
+)
 from app.schemas.free_capabilities import normalize_compliance_matrix
 from app.ai.json_utils import safe_json_parse
 
@@ -360,15 +364,29 @@ def _validate_with_schema(payload: Any, schema: Optional[Dict[str, Any]]) -> Non
     """
     Validate payload against JSON schema if available.
     """
-    if schema is None or json_validate is None:
+    if schema is None:
         return
-    json_validate(instance=payload, schema=schema)
+    
+    is_valid, errors = validate_json_schema(payload, schema)
+    if not is_valid:
+        error_msg = f"Schema validation failed: {', '.join(errors)}"
+        LOG.error("Schema validation failed: %s", error_msg)
+        raise ValueError(f"validation_error|{error_msg}")
 
 
 def _load_prompt_text(prompt_path: str) -> str:
     try:
         with open(prompt_path, "r", encoding="utf-8") as f:
-            return f.read()
+            prompt_text = f.read()
+        
+        # Sanitize the prompt template
+        sanitization_result = sanitize_prompt_template(prompt_text)
+        if sanitization_result.warnings:
+            LOG.warning("Prompt template sanitization warnings for %s: %s", 
+                       prompt_path, "; ".join(sanitization_result.warnings))
+        
+        return sanitization_result.sanitized_text
+        
     except Exception:
         # fallback to built-in defaults when files are not deployed
         stem = _normalize_stem(prompt_path)
@@ -379,7 +397,12 @@ def _load_prompt_text(prompt_path: str) -> str:
         elif "submission_checklist" in stem: key = "submission_checklist"
         if key and key in DEFAULT_PROMPTS:
             LOG.warning("Prompt file missing; using DEFAULT_PROMPTS[%s] for %s", key, prompt_path)
-            return DEFAULT_PROMPTS[key]
+            # Sanitize the default prompt as well
+            sanitization_result = sanitize_prompt_template(DEFAULT_PROMPTS[key])
+            if sanitization_result.warnings:
+                LOG.warning("Default prompt sanitization warnings for %s: %s", 
+                           key, "; ".join(sanitization_result.warnings))
+            return sanitization_result.sanitized_text
         LOG.exception("Prompt file missing and no default for %s", prompt_path)
         raise
 
@@ -420,10 +443,17 @@ def run_prompt(prompt_path: str, rfp_text: str, json_schema: Optional[Dict[str, 
         LOG.exception("Failed to read prompt file: %s", e)
         raise ValueError("model_error")
 
-    # ---- truncate big docs before anything else ----
-    if rfp_text and len(rfp_text) > TRUNCATE_CHARS:
-        LOG.info("run_prompt: truncating input from %d -> %d chars", len(rfp_text), TRUNCATE_CHARS)
-        rfp_text = rfp_text[:TRUNCATE_CHARS]
+    # ---- sanitize and truncate input text ----
+    if rfp_text:
+        sanitization_result = sanitize_for_prompt(rfp_text, context="rfp_text")
+        if sanitization_result.warnings:
+            LOG.warning("RFP text sanitization warnings: %s", "; ".join(sanitization_result.warnings))
+        rfp_text = sanitization_result.sanitized_text
+        
+        # Legacy truncation check (now handled by sanitization)
+        if len(rfp_text) > TRUNCATE_CHARS:
+            LOG.info("run_prompt: input truncated from %d -> %d chars", 
+                    sanitization_result.original_length, len(rfp_text))
 
     is_array = _schema_is_array(json_schema or {})
     use_json_object_format = bool(json_schema) and not is_array
@@ -452,9 +482,14 @@ def run_prompt(prompt_path: str, rfp_text: str, json_schema: Optional[Dict[str, 
         for chunk in window_chunks:
             chunks_used += 1
 
+        # Sanitize the chunk before sending to the model
+        chunk_sanitization = sanitize_for_prompt(chunk, context="chunk")
+        if chunk_sanitization.warnings:
+            LOG.warning("Chunk sanitization warnings: %s", "; ".join(chunk_sanitization.warnings))
+        
         messages = [
             {"role": "system", "content": prompt_text},
-            {"role": "user", "content": chunk},
+            {"role": "user", "content": chunk_sanitization.sanitized_text},
         ]
         # arrays: keep tokens small
         max_tokens = 1000 if is_array else 1200
@@ -467,9 +502,14 @@ def run_prompt(prompt_path: str, rfp_text: str, json_schema: Optional[Dict[str, 
 
         if is_array:
             try:
+                # Sanitize and validate the raw output
+                sanitized_raw, output_warnings = sanitize_and_validate_output(raw, context="model_output")
+                if output_warnings:
+                    LOG.warning("Model output sanitization warnings: %s", "; ".join(output_warnings))
+                
                 # Use robust JSON parsing with repair
                 schema_name = "compliance_matrix" if "compliance_matrix" in os.path.basename(prompt_path) else "array"
-                part = safe_json_parse(raw, schema_name)
+                part = safe_json_parse(sanitized_raw, schema_name)
                 if isinstance(part, list):
                     merged.extend(part)
                 else:
@@ -484,7 +524,7 @@ def run_prompt(prompt_path: str, rfp_text: str, json_schema: Optional[Dict[str, 
             except Exception as ex:
                 LOG.warning("array parse failed: %s", str(ex))
                 raise ValueError(f"json_parse|unexpected_error:{str(ex)}")
-                
+                    
             if len(merged) >= MAX_MERGED_ITEMS:
                 LOG.warning("run_prompt: reached MAX_MERGED_ITEMS=%d; stopping early", MAX_MERGED_ITEMS)
                 merged = merged[:MAX_MERGED_ITEMS]
@@ -492,8 +532,13 @@ def run_prompt(prompt_path: str, rfp_text: str, json_schema: Optional[Dict[str, 
         else:
             # object – later chunks can refine; keep last valid
             try:
+                # Sanitize and validate the raw output
+                sanitized_raw, output_warnings = sanitize_and_validate_output(raw, context="model_output")
+                if output_warnings:
+                    LOG.warning("Model output sanitization warnings: %s", "; ".join(output_warnings))
+                
                 schema_name = "object"
-                merged = safe_json_parse(raw, schema_name)
+                merged = safe_json_parse(sanitized_raw, schema_name)
             except ValueError as ve:
                 error_msg = str(ve)
                 if "JSON parsing failed" in error_msg:

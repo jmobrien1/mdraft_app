@@ -89,7 +89,9 @@ def _calculate_cost(pages: int) -> str:
         Estimated cost as a string decimal
     """
     try:
-        price_per_page = Decimal(os.getenv("PRICING_DOC_OCR_PER_PAGE_USD", "0"))
+        from .config import get_config
+        config = get_config()
+        price_per_page = Decimal(config.billing.PRICE_PER_PAGE_USD)
         total_cost = pages * price_per_page
         # Quantize to 4 decimal places
         return str(total_cost.quantize(Decimal('0.0001')))
@@ -132,9 +134,11 @@ def estimate() -> Any:
         return jsonify({"error": "could not read file"}), 400
     
     # Check file size against soft cap
-    max_size_bytes = int(os.getenv("MAX_UPLOAD_MB", "10")) * 1024 * 1024
+    from .config import get_config
+    config = get_config()
+    max_size_bytes = config.get_file_size_limit("binary")  # Use binary limit as fallback
     if len(file_data) > max_size_bytes:
-        max_mb = os.getenv("MAX_UPLOAD_MB", "10")
+        max_mb = config.file_sizes.BINARY_MB
         return jsonify({
             "error": f"file too large",
             "detail": f"Maximum file size is {max_mb}MB"

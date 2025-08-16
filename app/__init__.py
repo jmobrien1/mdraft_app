@@ -27,10 +27,15 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_bcrypt import Bcrypt
 from flask_login import LoginManager
+from flask_wtf.csrf import CSRFProtect
+from flask_session import Session
 from sqlalchemy import text
 
-# Import middleware
-from .middleware.logging import init_request_logging
+# Import centralized configuration
+from .config import get_config, ConfigurationError
+
+# Import structured logging
+from .utils.logging import setup_logging, StructuredJSONFormatter
 
 # Initialise extensions without an application context.  They will be
 # bound to the app inside create_app().
@@ -38,8 +43,11 @@ db: SQLAlchemy = SQLAlchemy()
 migrate: Migrate = Migrate()
 bcrypt: Bcrypt = Bcrypt()
 login_manager: LoginManager = LoginManager()
+csrf: CSRFProtect = CSRFProtect()
+session: Session = Session()
 
 # GLOBAL limiter (exported as app.limiter so routes can import it)
+# Note: Limiter is initialized before config is available, so we use ENV directly
 limiter = Limiter(
     key_func=get_remote_address,
     storage_uri=ENV.get("FLASK_LIMITER_STORAGE_URI"),
@@ -51,6 +59,7 @@ from .models_conversion import Conversion  # noqa: F401
 from .models_apikey import ApiKey  # noqa: F401
 
 
+# Legacy JSONFormatter kept for backward compatibility
 class JSONFormatter(logging.Formatter):
     """Format log records as JSON with optional correlation ID support."""
 
@@ -87,63 +96,52 @@ def create_app() -> Flask:
     """Create and configure the Flask application."""
     app = Flask(__name__)
 
-    # Application configuration
-    app.config["SECRET_KEY"] = ENV.get("SECRET_KEY", "changeme")
-    app.config.setdefault("MAX_CONTENT_LENGTH", 25 * 1024 * 1024)  # 25 MB hard cap
+    # Get centralized configuration
+    config = get_config()
+    
+    # Validate configuration and fail fast if invalid
+    try:
+        config.validate()
+        app.logger.info("Configuration validation passed")
+    except ConfigurationError as e:
+        app.logger.error(f"Configuration validation failed: {e}")
+        raise
+    
+    # Apply non-sensitive configuration to Flask app
+    app.config.update(config.to_dict())
+    
+    # Securely apply secrets to Flask app (prevents logging exposure)
+    config.apply_secrets_to_app(app)
     
     # Database configuration
     from .utils.db_url import normalize_db_url
-    db_url = normalize_db_url(ENV.get("DATABASE_URL", ""))
+    db_url = normalize_db_url(config.DATABASE_URL)
     app.config["SQLALCHEMY_DATABASE_URI"] = db_url
     app.logger.info("DB driver normalized to psycopg v3")
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-
-    # Google Cloud Storage configuration
-    app.config["GCS_BUCKET_NAME"] = ENV.get("GCS_BUCKET_NAME")
-    app.config["GCS_PROCESSED_BUCKET_NAME"] = ENV.get("GCS_PROCESSED_BUCKET_NAME")
     
-    # Google Cloud Tasks configuration
-    app.config["CLOUD_TASKS_QUEUE_ID"] = ENV.get("CLOUD_TASKS_QUEUE_ID")
-    app.config["CLOUD_TASKS_LOCATION"] = ENV.get("CLOUD_TASKS_LOCATION", "us-central1")
-    
-    # Celery configuration
-    app.config["CELERY_BROKER_URL"] = ENV.get("CELERY_BROKER_URL")
-    app.config["CELERY_RESULT_BACKEND"] = ENV.get("CELERY_RESULT_BACKEND")
-    app.config["QUEUE_MODE"] = ENV.get("QUEUE_MODE", "celery")
-    
-    # Rate limiting configuration
-    app.config["CONVERT_RATE_LIMIT_DEFAULT"] = ENV.get("CONVERT_RATE_LIMIT_DEFAULT", "20 per minute")
-    
-    # Billing configuration
-    app.config["BILLING_ENABLED"] = ENV.get("BILLING_ENABLED", "0") == "1"
-    app.config["STRIPE_SECRET_KEY"] = ENV.get("STRIPE_SECRET_KEY")
-    app.config["STRIPE_PRICE_PRO"] = ENV.get("STRIPE_PRICE_PRO")
-    app.config["STRIPE_WEBHOOK_SECRET"] = ENV.get("STRIPE_WEBHOOK_SECRET")
-    
-    # Document AI configuration
-    app.config["DOCAI_PROCESSOR_ID"] = ENV.get("DOCAI_PROCESSOR_ID")
-    app.config["DOCAI_LOCATION"] = ENV.get("DOCAI_LOCATION", "us")
-    
-    # Anonymous proposal configuration
-    app.config["FREE_TOOLS_REQUIRE_AUTH"] = ENV.get("FREE_TOOLS_REQUIRE_AUTH", "false").lower() == "true"
-    app.config["ANON_PROPOSAL_TTL_DAYS"] = int(ENV.get("ANON_PROPOSAL_TTL_DAYS", "14"))
-    app.config["ANON_RATE_LIMIT_PER_MINUTE"] = ENV.get("ANON_RATE_LIMIT_PER_MINUTE", "20")
-    app.config["ANON_RATE_LIMIT_PER_DAY"] = ENV.get("ANON_RATE_LIMIT_PER_DAY", "200")
+    # SQLAlchemy engine pooling configuration for Render
+    # Optimized for PaaS environment with connection stability
+    app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
+        "pool_pre_ping": True,      # Validate connections before use
+        "pool_size": 5,             # Maintain 5 persistent connections
+        "max_overflow": 5,          # Allow 5 additional connections when pool is full
+        "pool_recycle": 1800,       # Recycle connections after 30 minutes
+        "pool_timeout": 30,         # Wait up to 30 seconds for available connection
+        "echo": False,              # Disable SQL echo in production
+    }
+    app.logger.info("SQLAlchemy engine pooling configured for Render deployment")
     
     # Sentry configuration
     import sentry_sdk
     from sentry_sdk.integrations.flask import FlaskIntegration
 
-    sentry_dsn = ENV.get("SENTRY_DSN")
-    sentry_env = ENV.get("SENTRY_ENVIRONMENT", "production")
-    sentry_release = ENV.get("SENTRY_RELEASE")  # optional
-
-    if sentry_dsn:
+    if config.SENTRY_DSN:
         sentry_sdk.init(
-            dsn=sentry_dsn,
+            dsn=config.SENTRY_DSN,
             integrations=[FlaskIntegration()],
-            environment=sentry_env,
-            release=sentry_release,
+            environment=config.SENTRY_ENVIRONMENT,
+            release=config.SENTRY_RELEASE,
             traces_sample_rate=0.10,   # adjust later
         )
 
@@ -168,30 +166,78 @@ def create_app() -> Flask:
     from flask import request, jsonify
     @limiter.request_filter
     def _allowlist():
-        ips = {ip.strip() for ip in ENV.get("RATE_ALLOWLIST","").split(",") if ip.strip()}
+        ips = {ip.strip() for ip in config.RATE_ALLOWLIST.split(",") if ip.strip()}
         return request.remote_addr in ips
 
-    # Add request ID middleware
-    @app.before_request
-    def _set_request_id():
-        """Set request ID for logging and tracing."""
-        import uuid
-        request_id = request.headers.get('X-Request-ID') or str(uuid.uuid4())
-        request.environ['X-Request-ID'] = request_id
-        request.environ['HTTP_X_REQUEST_ID'] = request_id
+    # Request ID middleware is now handled by structured logging
 
-    # Add basic security headers
+    # Add comprehensive security headers with CSP
     @app.after_request
     def _set_secure_headers(resp):
+        # Determine if this is an HTML response that needs CSP
+        is_html_response = (
+            resp.mimetype == 'text/html' or 
+            request.path.endswith('.html') or
+            (resp.mimetype and 'html' in resp.mimetype)
+        )
+        
+        # Determine if this is an API response (JSON)
+        is_api_response = (
+            request.path.startswith('/api/') or
+            resp.mimetype == 'application/json' or
+            (resp.mimetype and 'json' in resp.mimetype)
+        )
+        
+        # Always set basic security headers
         resp.headers.setdefault("X-Content-Type-Options", "nosniff")
         resp.headers.setdefault("X-Frame-Options", "DENY")
         resp.headers.setdefault("Referrer-Policy", "no-referrer")
-        resp.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+        resp.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=(), payment=(), usb=(), magnetometer=(), gyroscope=(), accelerometer=()")
+        
         # HSTS (ok behind Render's TLS)
         resp.headers.setdefault("Strict-Transport-Security", "max-age=15552000; includeSubDomains; preload")
+        
+        # Add CSP only for HTML responses
+        if is_html_response:
+            csp_policy = config.csp.build_policy()
+            resp.headers.setdefault("Content-Security-Policy", csp_policy)
+            app.logger.debug(f"Applied CSP policy to HTML response: {csp_policy}")
+        
+        # For API responses, keep minimal headers (no CSP)
+        if is_api_response:
+            app.logger.debug("API response - minimal security headers applied")
+        
+        return resp
+    
+    # Configure logging level
+    level = (os.getenv("LOG_LEVEL") or "INFO").upper()
+    
+    # Database connection pool monitoring
+    @app.after_request
+    def _log_pool_stats(resp):
+        """Log connection pool statistics for monitoring."""
+        try:
+            if hasattr(db.engine, 'pool'):
+                pool = db.engine.pool
+                app.logger.debug(
+                    "DB Pool Stats",
+                    extra={
+                        "pool_size": pool.size(),
+                        "checked_in": pool.checkedin(),
+                        "checked_out": pool.checkedout(),
+                        "overflow": pool.overflow(),
+                        "invalid": pool.invalid()
+                    }
+                )
+        except Exception as e:
+            app.logger.debug(f"Could not log pool stats: {e}")
         return resp
 
+    # Initialize structured logging
+    setup_logging(app, log_level=level)
+    
     # Initialize request logging middleware
+    from .middleware.logging import init_request_logging
     init_request_logging(app)
 
     # Initialise extensions
@@ -199,17 +245,67 @@ def create_app() -> Flask:
     migrate.init_app(app, db)
     bcrypt.init_app(app)
     login_manager.init_app(app)
+    csrf.init_app(app)
+    
+    # --- Session Configuration ---
+    # Single code path for session configuration with hardened security
+    if config.SESSION_BACKEND == "redis":
+        # Redis session configuration for production
+        app.config["SESSION_TYPE"] = "redis"
+        app.config["SESSION_REDIS"] = config.REDIS_URL
+        app.logger.info(f"Using Redis session backend: {config.REDIS_URL}")
+    elif config.SESSION_BACKEND == "null":
+        # Disable sessions entirely (for testing or minimal deployments)
+        app.config["SESSION_TYPE"] = "null"
+        app.logger.info("Sessions disabled (null backend)")
+    else:
+        # Filesystem session configuration (default for development)
+        app.config["SESSION_TYPE"] = "filesystem"
+        app.logger.info("Using filesystem session backend")
+    
+    # Hardened session cookie configuration
+    app.config["SESSION_COOKIE_SECURE"] = config.SESSION_COOKIE_SECURE
+    app.config["SESSION_COOKIE_HTTPONLY"] = config.SESSION_COOKIE_HTTPONLY
+    app.config["SESSION_COOKIE_SAMESITE"] = config.SESSION_COOKIE_SAMESITE
+    
+    # Session lifetime configuration (in seconds)
+    session_lifetime_seconds = 60 * 60 * 24 * config.security.SESSION_LIFETIME_DAYS
+    app.config["PERMANENT_SESSION_LIFETIME"] = session_lifetime_seconds
+    app.config["SESSION_COOKIE_MAX_AGE"] = session_lifetime_seconds
+    
+    app.logger.info(f"Session lifetime: {config.security.SESSION_LIFETIME_DAYS} days ({session_lifetime_seconds} seconds)")
+    app.logger.info(f"Session cookies: Secure={config.SESSION_COOKIE_SECURE}, HttpOnly={config.SESSION_COOKIE_HTTPONLY}, SameSite={config.SESSION_COOKIE_SAMESITE}")
+    
+    # Initialize session extension
+    session.init_app(app)
+    
+    # CSRF Configuration
+    app.config.setdefault("WTF_CSRF_ENABLED", True)
+    app.config.setdefault("WTF_CSRF_TIME_LIMIT", 60 * 60 * config.security.CSRF_TIMEOUT_HOURS)
+    
+    # CSRF exemption logic is now handled by the @csrf_exempt_api decorator
+    # which uses the is_api_request() helper for explicit allowlist validation
+    
+    # CSRF exemption for API routes using the new is_api_request helper
+    @app.before_request
+    def _csrf_exempt_api_routes():
+        """Exempt API routes from CSRF when using the is_api_request() helper."""
+        from app.utils.csrf import is_api_request
+        if is_api_request(request):
+            csrf.exempt(request)
 
     # --- Authentication Configuration ---
     # Respect environment variable for login enforcement
-    login_disabled = ENV.get("LOGIN_DISABLED", "false").lower() in {"true", "1", "yes", "on"}
-    app.config.setdefault("LOGIN_DISABLED", login_disabled)
+    app.config.setdefault("LOGIN_DISABLED", config.LOGIN_DISABLED)
     
-    # Cookie security configuration for production
-    app.config.setdefault("SESSION_COOKIE_SECURE", ENV.get("SESSION_COOKIE_SECURE", "true").lower() in {"true", "1", "yes", "on"})
-    app.config.setdefault("SESSION_COOKIE_SAMESITE", ENV.get("SESSION_COOKIE_SAMESITE", "Lax"))
-    app.config.setdefault("REMEMBER_COOKIE_SECURE", ENV.get("REMEMBER_COOKIE_SECURE", "true").lower() in {"true", "1", "yes", "on"})
-    app.config.setdefault("REMEMBER_COOKIE_SAMESITE", ENV.get("REMEMBER_COOKIE_SAMESITE", "Lax"))
+    # Visitor session configuration
+    app.config.setdefault("VISITOR_SESSION_TTL_DAYS", config.security.SESSION_LIFETIME_DAYS)
+    
+    # Flask-Login cookie security configuration (overridden by Flask-Session above)
+    app.config.setdefault("REMEMBER_COOKIE_SECURE", True)  # Always Secure
+    app.config.setdefault("REMEMBER_COOKIE_HTTPONLY", True)  # Always HttpOnly
+    app.config.setdefault("REMEMBER_COOKIE_SAMESITE", "Lax")  # SameSite=Lax
+    app.config.setdefault("REMEMBER_COOKIE_MAX_AGE", 60 * 60 * 24 * config.security.SESSION_LIFETIME_DAYS)
     
     # Configure login manager
     login_manager.login_view = "auth.login"
@@ -228,7 +324,7 @@ def create_app() -> Flask:
         return redirect(url_for("auth.login", next=request.url))
     
     # Only disable login if explicitly configured
-    if login_disabled:
+    if config.LOGIN_DISABLED:
         try:
             # If a LoginManager was attached, give it a no-op user_loader.
             lm = getattr(app, "login_manager", None)
@@ -246,29 +342,6 @@ def create_app() -> Flask:
             from .models import User
             return User.query.get(int(user_id))
     # --- end auth configuration ---
-
-    # Configure logging with stdout stream handler (avoid duplicates)
-    level = (os.getenv("LOG_LEVEL") or "INFO").upper()
-    app.logger.setLevel(level)
-
-    has_stream = any(isinstance(h, logging.StreamHandler) for h in app.logger.handlers)
-    if not has_stream:
-        sh = logging.StreamHandler()   # stdout on Render
-        sh.setLevel(level)
-        fmt = logging.Formatter('%(asctime)s %(levelname)s %(name)s: %(message)s')
-        sh.setFormatter(fmt)
-        app.logger.addHandler(sh)
-
-    # optional: avoid duplicate propagation to root
-    app.logger.propagate = False
-
-    # Set up structured logging when not in debug mode.  In debug mode
-    # Flask's built-in debugger provides human-readable logs.
-    if not app.debug:
-        handler = logging.StreamHandler()
-        handler.setFormatter(JSONFormatter())
-        app.logger.addHandler(handler)
-        app.logger.setLevel(logging.INFO)
 
     # Ensure upload and processed directories exist.  These directories
     # simulate storage buckets in production.  They should be ignored by
@@ -343,66 +416,28 @@ def create_app() -> Flask:
     if not app.config.get("TESTING", False):
         try:
             with app.app_context():
-                res = db.session.execute(text("""
-                    SELECT COUNT(*) FROM information_schema.columns
-                    WHERE table_name='proposals' AND column_name='visitor_session_id'
-                """)).scalar()
+                # Database-agnostic schema check
+                db_url = app.config.get("SQLALCHEMY_DATABASE_URI", "")
+                if "sqlite" in db_url.lower():
+                    # SQLite-specific check
+                    res = db.session.execute(text("""
+                        SELECT COUNT(*) FROM pragma_table_info('proposals')
+                        WHERE name='visitor_session_id'
+                    """)).scalar()
+                else:
+                    # PostgreSQL/MySQL-specific check
+                    res = db.session.execute(text("""
+                        SELECT COUNT(*) FROM information_schema.columns
+                        WHERE table_name='proposals' AND column_name='visitor_session_id'
+                    """)).scalar()
+                
                 if res != 1:
                     app.logger.error("DB not migrated: proposals.visitor_session_id missing")
                     app.logger.error("Migration doctor should have run at startup")
         except Exception as e:
             app.logger.error(f"DB probe error: {e}")
 
-    # Add global error handler for comprehensive logging
-    from flask import request, jsonify, render_template
-    import traceback, uuid
-    log = logging.getLogger(__name__)
-
-    @app.errorhandler(Exception)
-    def _json_errors(e):
-        cid = str(uuid.uuid4())[:8]
-        path = getattr(request, "path", "?")
-        log.exception("EXC %s %s %s", cid, path, e)
-        code = getattr(e, "code", 500)
-        # Map common errors
-        default = "server_error"
-        name = getattr(e, "name", default) or default
-        request_id = request.environ.get('X-Request-ID', 'unknown')
-        return jsonify({"error": name, "cid": cid, "request_id": request_id}), code
-
-    # Add friendly error handlers (JSON for /api, HTML for UI)
-    def _wants_json():
-        return request.path.startswith("/api/")
-
-    @app.errorhandler(400)
-    def _bad_request(e):
-        request_id = request.environ.get('X-Request-ID', 'unknown')
-        return (jsonify(error="bad_request", detail=str(e), request_id=request_id), 400) if _wants_json() \
-               else (render_template("errors/400.html"), 400)
-
-    @app.errorhandler(404)
-    def _not_found(e):
-        request_id = request.environ.get('X-Request-ID', 'unknown')
-        return (jsonify(error="not_found", request_id=request_id), 404) if _wants_json() \
-               else (render_template("errors/404.html"), 404)
-
-    @app.errorhandler(413)  # payload too large
-    def _too_large(e):
-        request_id = request.environ.get('X-Request-ID', 'unknown')
-        return (jsonify(error="payload_too_large", request_id=request_id), 413) if _wants_json() \
-               else (render_template("errors/413.html"), 413)
-
-    @app.errorhandler(429)
-    def _too_many(e):
-        # Keep your existing limiter 429 handler if defined; otherwise:
-        request_id = request.environ.get('X-Request-ID', 'unknown')
-        return (jsonify(error="rate_limited", detail=str(e.description), request_id=request_id), 429) if _wants_json() \
-               else ("Rate limit exceeded. Try again shortly.", 429)
-
-    @app.errorhandler(500)
-    def _server_error(e):
-        request_id = request.environ.get('X-Request-ID', 'unknown')
-        return (jsonify(error="server_error", request_id=request_id), 500) if _wants_json() \
-               else (render_template("errors/500.html"), 500)
+    # Error handling is now managed by the errors blueprint
+    # which provides unified JSON error responses with Sentry integration
 
     return app

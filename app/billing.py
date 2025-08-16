@@ -28,7 +28,9 @@ def is_billing_enabled() -> bool:
     Returns:
         True if BILLING_ENABLED=1, False otherwise
     """
-    return os.getenv("BILLING_ENABLED", "0") == "1"
+    from .config import get_config
+    config = get_config()
+    return config.billing.ENABLED
 
 
 def get_stripe_config() -> Optional[Dict[str, str]]:
@@ -37,17 +39,16 @@ def get_stripe_config() -> Optional[Dict[str, str]]:
     Returns:
         Dictionary with Stripe config or None if missing required keys
     """
-    secret_key = os.getenv("STRIPE_SECRET_KEY")
-    price_pro = os.getenv("STRIPE_PRICE_PRO")
-    webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET")
+    from .config import get_config
+    config = get_config()
     
-    if not all([secret_key, price_pro, webhook_secret]):
+    if not all([config.STRIPE_SECRET_KEY, config.billing.STRIPE_PRICE_PRO, config.STRIPE_WEBHOOK_SECRET]):
         return None
     
     return {
-        "secret_key": secret_key,
-        "price_pro": price_pro,
-        "webhook_secret": webhook_secret
+        "secret_key": config.STRIPE_SECRET_KEY,
+        "price_pro": config.billing.STRIPE_PRICE_PRO,
+        "webhook_secret": config.STRIPE_WEBHOOK_SECRET
     }
 
 

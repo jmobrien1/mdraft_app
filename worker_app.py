@@ -24,26 +24,15 @@ def create_worker_app() -> Flask:
     # Set worker service flag
     os.environ["WORKER_SERVICE"] = "true"
     
-    # Application configuration
-    app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "worker-secret-key")
+    # Get centralized configuration
+    from app.config import get_config
+    config = get_config()
     
-    # Database configuration
-    from app.utils.db_url import normalize_db_url
-    db_url = normalize_db_url(os.environ.get("DATABASE_URL", ""))
-    app.config["SQLALCHEMY_DATABASE_URI"] = db_url
-    app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-
-    # Google Cloud Storage configuration
-    app.config["GCS_BUCKET_NAME"] = os.environ.get("GCS_BUCKET_NAME")
-    app.config["GCS_PROCESSED_BUCKET_NAME"] = os.environ.get("GCS_PROCESSED_BUCKET_NAME")
+    # Apply non-sensitive configuration to Flask app
+    app.config.update(config.to_dict())
     
-    # Google Cloud Tasks configuration
-    app.config["CLOUD_TASKS_QUEUE_NAME"] = os.environ.get("CLOUD_TASKS_QUEUE_NAME", "mdraft-conversion-queue")
-    app.config["CLOUD_TASKS_LOCATION"] = os.environ.get("CLOUD_TASKS_LOCATION", "us-central1")
-    
-    # Document AI configuration
-    app.config["DOCAI_PROCESSOR_ID"] = os.environ.get("DOCAI_PROCESSOR_ID")
-    app.config["DOCAI_LOCATION"] = os.environ.get("DOCAI_LOCATION", "us")
+    # Securely apply secrets to Flask app (prevents logging exposure)
+    config.apply_secrets_to_app(app)
     
     # Initialize extensions
     db.init_app(app)

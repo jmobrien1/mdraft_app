@@ -42,6 +42,28 @@
   <script type="module" src="/static/app.js"></script>
   <div class="toast" aria-live="polite"></div>
   
+  <!-- CSRF Token for AJAX requests -->
+  <script>
+    // Make CSRF token available for AJAX requests
+    window.csrfToken = "{{ csrf_token() }}";
+    
+    // Add CSRF token to all AJAX requests
+    document.addEventListener('DOMContentLoaded', function() {
+      // Override fetch to include CSRF token
+      const originalFetch = window.fetch;
+      window.fetch = function(url, options = {}) {
+        if (options.method && options.method.toUpperCase() !== 'GET') {
+          // Add CSRF token to headers for non-GET requests
+          options.headers = options.headers || {};
+          if (!options.headers['X-CSRFToken']) {
+            options.headers['X-CSRFToken'] = window.csrfToken;
+          }
+        }
+        return originalFetch(url, options);
+      };
+    });
+  </script>
+  
   {% if config.BILLING_ENABLED %}
   <!-- Upgrade Modal -->
   <div id="upgrade-modal" class="modal" style="display: none;">

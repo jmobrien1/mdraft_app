@@ -5,15 +5,19 @@ from flask import Blueprint, request, jsonify, Response, current_app
 from flask_login import login_required
 from werkzeug.utils import secure_filename
 from datetime import datetime, timedelta, timezone
+from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 from . import db, limiter
 from .models_conversion import Conversion
 from .security import sniff_category, size_ok
 from .auth_api import require_api_key_if_configured, rate_limit_for_convert, rate_limit_key_func
+from .utils.rate_limiting import get_upload_rate_limit_key
 from .utils.authz import allow_session_or_api_key
 from .quality import sha256_file, clean_markdown, pdf_text_fallback
 from .webhooks import deliver_webhook
 from .utils import is_file_allowed
+from .utils.csrf import csrf_exempt_for_api
 
 # Public mode toggle
 PUBLIC = (os.getenv("MDRAFT_PUBLIC_MODE") or "").strip().lower() in {"1","true","yes","on","y"}
@@ -59,6 +63,151 @@ def _get_owner_fields():
     
     return fields
 
+def _atomic_upload_handler(file_hash: str, filename: str, original_mime: str, 
+                          original_size: int, gcs_uri: str, owner_fields: dict, 
+                          ttl_days: int, callback_url: str = None):
+    """
+    Atomic upload handler that ensures idempotency under concurrency.
+    
+    This function:
+    1. Begins a database transaction
+    2. Uses SELECT ... FOR UPDATE to lock any existing conversion with the same SHA256+owner
+    3. If a COMPLETED conversion exists, returns it immediately
+    4. If a pending conversion exists, returns it
+    5. Otherwise creates a new conversion and enqueues the task
+    6. Commits the transaction
+    
+    This prevents race conditions where multiple concurrent uploads of the same file
+    could create duplicate conversions.
+    """
+    from .celery_tasks import enqueue_conversion_task
+    
+    # Start transaction
+    db.session.begin()
+    
+    try:
+        # Build the WHERE clause for the SELECT ... FOR UPDATE query
+        where_conditions = ["sha256 = :sha256"]
+        params = {"sha256": file_hash}
+        
+        if owner_fields.get("user_id"):
+            where_conditions.append("user_id = :user_id")
+            params["user_id"] = owner_fields["user_id"]
+        else:
+            where_conditions.append("user_id IS NULL")
+            
+        if owner_fields.get("visitor_session_id"):
+            where_conditions.append("visitor_session_id = :visitor_session_id")
+            params["visitor_session_id"] = owner_fields["visitor_session_id"]
+        else:
+            where_conditions.append("visitor_session_id IS NULL")
+        
+        where_clause = " AND ".join(where_conditions)
+        
+        # SELECT ... FOR UPDATE to lock any existing conversion
+        result = db.session.execute(
+            text(f"""
+                SELECT id, status, filename, markdown 
+                FROM conversions 
+                WHERE {where_clause}
+                FOR UPDATE
+            """),
+            params
+        ).fetchone()
+        
+        if result:
+            existing_id, existing_status, existing_filename, existing_markdown = result
+            
+            # If completed conversion exists, return it immediately
+            if existing_status == "COMPLETED" and existing_markdown:
+                current_app.logger.info(f"Idempotency hit: returning existing completed conversion {existing_id} for SHA256 {file_hash[:8]}...")
+                db.session.rollback()  # Release the lock
+                return {
+                    "conversion_id": existing_id,
+                    "status": "COMPLETED",
+                    "filename": existing_filename,
+                    "duplicate_of": existing_id,
+                    "links": _links(existing_id),
+                    "note": "deduplicated"
+                }, 200
+            
+            # If pending/processing conversion exists, return it
+            if existing_status in ["QUEUED", "PROCESSING"]:
+                current_app.logger.info(f"Duplicate upload detected: returning existing pending conversion {existing_id} for SHA256 {file_hash[:8]}...")
+                db.session.rollback()  # Release the lock
+                return {
+                    "conversion_id": existing_id,
+                    "status": existing_status,
+                    "filename": existing_filename,
+                    "links": _links(existing_id),
+                    "note": "duplicate_upload"
+                }, 202
+        
+        # No existing conversion found, create a new one
+        expires_at = (datetime.now(timezone.utc) + timedelta(days=ttl_days)) if ttl_days > 0 else None
+        
+        conv = Conversion(
+            filename=filename,
+            status="QUEUED",
+            sha256=file_hash,
+            original_mime=original_mime,
+            original_size=original_size,
+            stored_uri=gcs_uri,
+            expires_at=expires_at,
+            **owner_fields
+        )
+        
+        db.session.add(conv)
+        db.session.flush()  # Get the ID without committing
+        
+        conv_id = conv.id
+        
+        # Enqueue Celery task for async processing
+        task_id = enqueue_conversion_task(conv_id, owner_fields.get("user_id"), gcs_uri, callback_url)
+        
+        # Commit the transaction
+        db.session.commit()
+        
+        current_app.logger.info(f"Created new conversion {conv_id} and enqueued task {task_id} for SHA256 {file_hash[:8]}...")
+        
+        return {
+            "conversion_id": conv_id,
+            "status": conv.status,
+            "filename": filename,
+            "task_id": task_id,
+            "links": _links(conv_id),
+        }, 202
+        
+    except IntegrityError as e:
+        # Handle unique constraint violation (shouldn't happen with FOR UPDATE, but safety)
+        db.session.rollback()
+        current_app.logger.warning(f"IntegrityError during atomic upload: {e}")
+        
+        # Try to find the existing conversion that caused the violation
+        from .services.query_service import ConversionQueryService
+        existing = ConversionQueryService.get_conversion_by_sha256(
+            sha256=file_hash,
+            user_id=owner_fields.get("user_id"),
+            visitor_session_id=owner_fields.get("visitor_session_id")
+        )
+        
+        if existing:
+            return {
+                "conversion_id": existing.id,
+                "status": existing.status,
+                "filename": existing.filename,
+                "links": _links(existing.id),
+                "note": "duplicate_detected"
+            }, 202 if existing.status in ["QUEUED", "PROCESSING"] else 200
+        
+        # If we can't find the existing conversion, something went wrong
+        raise
+        
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.exception(f"Error in atomic upload handler: {e}")
+        raise
+
 def _convert_with_markitdown(path: str) -> str:
     try:
         from markitdown import MarkItDown
@@ -80,10 +229,26 @@ def _convert_with_markitdown(path: str) -> str:
         with open(path, "rb") as fh:
             return fh.read(8192).decode("utf-8", errors="ignore")
 
-@bp.post("/convert")
+@bp.post("/upload")
 @login_required
-@limiter.limit(rate_limit_for_convert, key_func=rate_limit_key_func)
-def api_convert():
+@limiter.limit(lambda: current_app.config.get("UPLOAD_RATE_LIMIT", "20 per minute"), 
+               key_func=lambda: get_upload_rate_limit_key())
+@csrf_exempt_for_api
+def api_upload():
+    """
+    Fully async upload endpoint that never blocks on conversion.
+    
+    This endpoint:
+    1. Validates the uploaded file
+    2. Calculates SHA256 for idempotency
+    3. Uses atomic database operations to ensure only one conversion per file per owner
+    4. If duplicate found, returns existing result immediately
+    5. Otherwise, saves file to GCS and enqueues Celery task
+    6. Returns 202 Accepted with conversion ID for polling
+    
+    The endpoint is idempotent - multiple identical uploads will only
+    create one conversion job, even under high concurrency.
+    """
     if not allow_session_or_api_key():
         return jsonify({"error": "unauthorized"}), 401
     
@@ -99,63 +264,62 @@ def api_convert():
     if size == 0:
         return jsonify({"error":"file_empty"}), 400
     
-    # Validate file type
-    if not is_file_allowed(file.filename):
-        return jsonify({"error":"file_type_not_allowed"}), 400
-
-    # Initialize conv and conv_id to prevent UnboundLocalError
-    conv = None
-    conv_id = None
+    # Validate file using comprehensive validation system
+    from .utils.validation import validate_upload_file, ValidationError
+    
+    # Get correlation ID for logging
+    correlation_id = request.headers.get('X-Correlation-ID') or request.headers.get('X-Request-ID')
+    
+    validation_result = validate_upload_file(file.stream, file.filename, correlation_id)
+    
+    if not validation_result.is_valid:
+        error_response = {"error": validation_result.error.value}
+        if validation_result.error == ValidationError.FILE_TOO_LARGE:
+            return jsonify(error_response), 413
+        elif validation_result.error == ValidationError.EMPTY_FILE:
+            return jsonify({"error": "file_empty"}), 400
+        elif validation_result.error == ValidationError.VIRUS_DETECTED:
+            return jsonify(error_response), 400
+        else:
+            return jsonify(error_response), 400
 
     filename = secure_filename(file.filename or "upload.bin")
-    queue_mode = os.getenv("QUEUE_MODE", "sync").lower()
-    use_gcs = os.getenv("USE_GCS", "0").lower() in ("1","true","yes")
-
     callback_url = (
         request.form.get("callback_url")
         or request.args.get("callback_url")
         or (request.json or {}).get("callback_url") if request.is_json else None
     )
-    # optionally validate it's http/https
+    
+    # Validate callback URL
     if callback_url and not (callback_url.startswith("http://") or callback_url.startswith("https://")):
         return jsonify(error="invalid_callback_url"), 400
 
-    if queue_mode == "async" and use_gcs:
-        # Save locally and upload to GCS for the worker to fetch
-        with tempfile.NamedTemporaryFile(delete=False) as tmp:
-            file.save(tmp.name)
-            tmp_path = tmp.name
-        
+    # Save file temporarily for processing
+    with tempfile.NamedTemporaryFile(delete=False) as tmp:
+        file.save(tmp.name)
+        tmp_path = tmp.name
+    
+    try:
         # Enforce security checks
         fallback_mime = (file.mimetype or None)
         mime, category = sniff_category(tmp_path, fallback_mime=fallback_mime)
         if category is None:
-            try: os.unlink(tmp_path)
-            except Exception: pass
             return jsonify(error="unsupported_media_type", mime=(mime or fallback_mime)), 415
         if not size_ok(tmp_path, category):
-            try: os.unlink(tmp_path)
-            except Exception: pass
             return jsonify(error="payload_too_large", category=category), 413
 
+        # Calculate SHA256 for idempotency
         file_hash = sha256_file(tmp_path)
         original_size = os.path.getsize(tmp_path)
         original_mime = mime or fallback_mime or "application/octet-stream"
 
-        # Dedupe unless explicitly forced
+        # Check for force flag (bypass idempotency)
         force = (request.args.get("force") in ("1","true","yes"))
-        if not force:
-            existing = Conversion.query.filter_by(sha256=file_hash, status="COMPLETED").order_by(Conversion.created_at.desc()).first()
-            if existing and existing.markdown:
-                return jsonify({
-                    "conversion_id": existing.id,
-                    "status": "COMPLETED",
-                    "filename": existing.filename,
-                    "duplicate_of": existing.id,
-                    "links": _links(existing.id),
-                    "note": "deduplicated"
-                }), 200
-        
+        if force:
+            # Use the old non-atomic path for forced uploads
+            return _legacy_upload_handler(tmp_path, filename, file_hash, original_mime, original_size, callback_url)
+
+        # Upload to GCS for async processing
         try:
             from google.cloud import storage
             bucket_name = os.environ["GCS_BUCKET_NAME"]
@@ -166,145 +330,105 @@ def api_convert():
             blob.upload_from_filename(tmp_path)
             gcs_uri = f"gs://{bucket_name}/{object_key}"
 
+            # Get owner fields and TTL
             ttl_days = int(os.getenv("RETENTION_DAYS", "30"))
             owner_fields = _get_owner_fields()
-            conv = Conversion(
-                filename=filename,
-                status="QUEUED",
-                sha256=file_hash,
-                original_mime=original_mime,
-                original_size=original_size,
-                stored_uri=None,  # set below
-                expires_at=(datetime.utcnow() + timedelta(days=ttl_days)) if ttl_days > 0 else None,
-                **owner_fields
-            )
-            db.session.add(conv)
-            db.session.commit()
             
-            # Set conv_id immediately after committing
-            conv_id = conv.id
+            # Use atomic upload handler
+            return _atomic_upload_handler(
+                file_hash, filename, original_mime, original_size, 
+                gcs_uri, owner_fields, ttl_days, callback_url
+            )
 
-            conv.stored_uri = gcs_uri
-            db.session.commit()
-
-            from celery_worker import celery
-            celery.send_task("convert_from_gcs", args=[conv.id, gcs_uri, filename, callback_url])
-
-            return jsonify({
-                "conversion_id": conv_id,
-                "status": conv.status,
-                "filename": filename,
-                "links": _links(conv_id),
-            }), 202
         except Exception as e:
-            current_app.logger.exception("convert_failed: %s", e)
-            if conv is not None:
-                try:
-                    conv.status = "FAILED"
-                    conv.error = str(e)
-                    db.session.commit()
-                except Exception:
-                    db.session.rollback()
-            resp = {"error": "server_error"}
-            if conv_id:
-                resp["id"] = conv_id
-                resp["links"] = {"self": f"/api/conversions/{conv_id}"}
-            return jsonify(resp), 500
-        finally:
-            try: os.unlink(tmp_path)
-            except Exception: pass
+            current_app.logger.exception("Upload failed: %s", e)
+            return jsonify({"error": "server_error"}), 500
 
-    # ---------- synchronous fallback (existing behavior) ----------
-    with tempfile.NamedTemporaryFile(delete=False) as tmp:
-        file.save(tmp.name)
-        tmp_path = tmp.name
+    finally:
+        try: 
+            os.unlink(tmp_path)
+        except Exception: 
+            pass
 
-    # Enforce security checks
-    fallback_mime = (file.mimetype or None)
-    mime, category = sniff_category(tmp_path, fallback_mime=fallback_mime)
-    if category is None:
-        try: os.unlink(tmp_path)
-        except Exception: pass
-        return jsonify(error="unsupported_media_type", mime=(mime or fallback_mime)), 415
-    if not size_ok(tmp_path, category):
-        try: os.unlink(tmp_path)
-        except Exception: pass
-        return jsonify(error="payload_too_large", category=category), 413
+def _legacy_upload_handler(tmp_path: str, filename: str, file_hash: str, 
+                          original_mime: str, original_size: int, callback_url: str = None):
+    """
+    Legacy upload handler for forced uploads (bypasses idempotency).
+    This maintains backward compatibility for the force=true parameter.
+    """
+    # Check for existing completed conversion with same SHA256 (idempotency)
+    from .services.query_service import ConversionQueryService
+    existing = ConversionQueryService.get_completed_conversion_by_sha256(sha256=file_hash)
+    if existing and existing.markdown:
+        current_app.logger.info(f"Idempotency hit: returning existing conversion {existing.id} for SHA256 {file_hash[:8]}...")
+        return jsonify({
+            "conversion_id": existing.id,
+            "status": "COMPLETED",
+            "filename": existing.filename,
+            "duplicate_of": existing.id,
+            "links": _links(existing.id),
+            "note": "deduplicated"
+        }), 200
 
-    file_hash = sha256_file(tmp_path)
-    original_size = os.path.getsize(tmp_path)
-    original_mime = mime or fallback_mime or "application/octet-stream"
+    # Check for existing pending/processing conversion with same SHA256
+    existing_pending_list = ConversionQueryService.get_pending_conversions_by_sha256(sha256=file_hash)
+    existing_pending = existing_pending_list[0] if existing_pending_list else None
+    
+    if existing_pending:
+        current_app.logger.info(f"Duplicate upload detected: returning existing pending conversion {existing_pending.id} for SHA256 {file_hash[:8]}...")
+        return jsonify({
+            "conversion_id": existing_pending.id,
+            "status": existing_pending.status,
+            "filename": existing_pending.filename,
+            "links": _links(existing_pending.id),
+            "note": "duplicate_upload"
+        }), 202
 
-    # Dedupe unless explicitly forced
-    force = (request.args.get("force") in ("1","true","yes"))
-    if not force:
-        existing = Conversion.query.filter_by(sha256=file_hash, status="COMPLETED").order_by(Conversion.created_at.desc()).first()
-        if existing and existing.markdown:
-            return jsonify({
-                "conversion_id": existing.id,
-                "status": "COMPLETED",
-                "filename": existing.filename,
-                "duplicate_of": existing.id,
-                "links": _links(existing.id),
-                "note": "deduplicated"
-            }), 200
-
+    # Upload to GCS for async processing
     try:
-        # Wrap downstream converter in try/except and map expected failures
-        try:
-            markdown = _convert_with_markitdown(tmp_path) or ""
-            if not markdown and original_mime == "application/pdf":
-                fb = pdf_text_fallback(tmp_path)
-                if fb:
-                    markdown = fb
-            markdown = clean_markdown(markdown)
-        except Exception as e:
-            current_app.logger.exception("extract_failed: %s", e)
-            return jsonify({"error":"extract_failed"}), 422
+        from google.cloud import storage
+        bucket_name = os.environ["GCS_BUCKET_NAME"]
+        client = storage.Client()
+        bucket = client.bucket(bucket_name)
+        object_key = f"uploads/{uuid.uuid4()}-{filename}"
+        blob = bucket.blob(object_key)
+        blob.upload_from_filename(tmp_path)
+        gcs_uri = f"gs://{bucket_name}/{object_key}"
 
+        # Create conversion record
         ttl_days = int(os.getenv("RETENTION_DAYS", "30"))
         owner_fields = _get_owner_fields()
         conv = Conversion(
             filename=filename,
-            status="COMPLETED",
-            markdown=markdown,
+            status="QUEUED",
             sha256=file_hash,
             original_mime=original_mime,
             original_size=original_size,
-            stored_uri=None,
-            expires_at=(datetime.utcnow() + timedelta(days=ttl_days)) if ttl_days > 0 else None,
+            stored_uri=gcs_uri,
+            expires_at=(datetime.now(timezone.utc) + timedelta(days=ttl_days)) if ttl_days > 0 else None,
             **owner_fields
         )
         db.session.add(conv)
         db.session.commit()
         
-        # Set conv_id immediately after committing
         conv_id = conv.id
-        
-        if callback_url:
-            try:
-                code, _ = deliver_webhook(
-                    callback_url,
-                    "conversion.completed",
-                    {
-                        "id": conv_id,
-                        "filename": conv.filename,
-                        "status": "COMPLETED",
-                        "links": _links(conv_id),
-                    },
-                )
-                current_app.logger.info("webhook_delivered_sync", extra={"url": callback_url, "code": code})
-            except Exception as e:
-                current_app.logger.exception("webhook_sync_error: %s", e)
-        
+
+        # Enqueue Celery task for async processing
+        from .celery_tasks import enqueue_conversion_task
+        task_id = enqueue_conversion_task(conv_id, owner_fields.get("user_id"), gcs_uri, callback_url)
+
+        current_app.logger.info(f"Enqueued conversion task {task_id} for conversion {conv_id} (SHA256: {file_hash[:8]}...)")
+
         return jsonify({
             "conversion_id": conv_id,
             "status": conv.status,
             "filename": filename,
+            "task_id": task_id,
             "links": _links(conv_id),
-        }), 200
+        }), 202
+
     except Exception as e:
-        current_app.logger.exception("convert_failed: %s", e)
+        current_app.logger.exception("Upload failed: %s", e)
         if conv is not None:
             try:
                 conv.status = "FAILED"
@@ -317,11 +441,9 @@ def api_convert():
             resp["id"] = conv_id
             resp["links"] = {"self": f"/api/conversions/{conv_id}"}
         return jsonify(resp), 500
-    finally:
-        try: os.unlink(tmp_path)
-        except Exception: pass
 
 @bp.get("/conversions/<id>")
+@csrf_exempt_for_api
 def get_conversion(id):
     conv = Conversion.query.get_or_404(id)
     
@@ -337,6 +459,7 @@ def get_conversion(id):
         "conversion_id": conv.id,
         "filename": conv.filename,
         "status": conv.status,
+        "progress": conv.progress,
         "error": error_details,
         "links": {
             "markdown": f"/api/conversions/{conv.id}/markdown",
@@ -367,12 +490,14 @@ def _get_readable_error_message(error_text: str) -> str:
         return "An error occurred during conversion. Please try again or contact support if the problem persists."
 
 @bp.get("/conversions/<id>/markdown")
+@csrf_exempt_for_api
 def get_conversion_markdown(id):
     conv = Conversion.query.get_or_404(id)
     return Response((conv.markdown or ""), mimetype="text/markdown")
 
 @bp.get("/conversions")
-@limiter.limit(os.getenv("LIST_RATE_LIMIT", "240 per minute"))
+@limiter.limit("240 per minute")  # Rate limit configured in centralized config
+@csrf_exempt_for_api
 def list_conversions():
     from flask import request, jsonify, current_app, make_response, g
     try:
@@ -429,6 +554,7 @@ def list_conversions():
             "id": c.id,
             "filename": c.filename,
             "status": c.status,
+            "progress": c.progress,
             "created_at": c.created_at.isoformat(),
             "links": {
                 "self": f"/api/conversions/{c.id}",

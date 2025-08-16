@@ -42,6 +42,10 @@ def make_celery():
         'app.celery_tasks.ping_task': {
             'queue': 'mdraft_default',
             'routing_key': 'mdraft_default',
+        },
+        'app.celery_tasks.daily_cleanup_task': {
+            'queue': 'mdraft_default',
+            'routing_key': 'mdraft_default',
         }
     }
     
@@ -67,11 +71,18 @@ def ping_task(message: str = "pong"):
     from app.celery_tasks import ping_task as ping_func
     return ping_func(message)
 
-@celery.task
-def convert_document(job_id: int, user_id: int, gcs_uri: str):
-    """Convert document task with idempotence."""
+@celery.task(
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60,
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_jitter=True,
+)
+def convert_document(self, conversion_id: str, user_id: int, gcs_uri: str, callback_url: str = None):
+    """Convert document task with idempotence and retry logic."""
     from app.celery_tasks import convert_document as convert_func
-    return convert_func(job_id, user_id, gcs_uri)
+    return convert_func(conversion_id, user_id, gcs_uri, callback_url)
 
 @celery.task
 def daily_cleanup_task():

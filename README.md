@@ -78,7 +78,11 @@ A Flask-based SaaS application that converts documents (PDF, DOCX) to Markdown f
 
 3. **Install dependencies**
    ```bash
+   # Install production dependencies
    pip install -r requirements.txt
+   
+   # Or install development dependencies (includes testing and security tools)
+   pip install -r requirements-dev.txt
    ```
 
 4. **Set up environment variables**
@@ -98,6 +102,68 @@ A Flask-based SaaS application that converts documents (PDF, DOCX) to Markdown f
    ```bash
    python run.py
    ```
+
+## Build Engineering & Security
+
+### Dependency Management with pip-tools
+
+This project uses `pip-tools` for reliable dependency management:
+
+```bash
+# Lock production dependencies (generates requirements.txt with exact versions)
+make lock
+
+# Lock development dependencies (generates requirements-dev.txt with exact versions)
+make lock-dev
+
+# Install development tools
+make install-dev
+```
+
+### Security Scanning
+
+Regular security scanning is integrated into the build process:
+
+```bash
+# Run comprehensive security scan
+make security-scan
+
+# Or run the security script directly
+./scripts/security_scan.sh
+```
+
+The security scan includes:
+- **pip-audit**: Vulnerability scanning using the Python Packaging Authority database
+- **safety**: Additional security checks using the Safety database
+- **Compatibility checks**: Celery/Redis version compatibility validation
+- **Package pinning verification**: Ensures security-critical packages are pinned
+
+### Build Validation
+
+Validate that your build environment is properly configured:
+
+```bash
+# Run build validation
+make build-validate
+```
+
+This checks:
+- ✅ Celery/Redis compatibility
+- ✅ Security-critical package pinning (itsdangerous, Werkzeug)
+- ✅ Google Cloud package availability
+- ✅ All required dependencies are accessible
+
+### Security Reports
+
+Security scans generate detailed reports:
+- `pip-audit-report.json`: Detailed vulnerability findings
+- `safety-report.json`: Additional security analysis
+
+**Acceptance Criteria:**
+- ✅ App builds clean without errors
+- ✅ pip-audit shows no high/critical vulnerabilities
+- ✅ Celery/Redis versions are compatible
+- ✅ All Google Cloud packages are available
 
 The application will be available at `http://localhost:5000`
 
@@ -645,6 +711,58 @@ gcloud run services update mdraft \
 - **Environment Variables**: Sensitive data stored in environment
 - **Signed URLs**: Temporary, expiring download links (V4)
 - **Streaming Uploads**: Direct to GCS without temporary files
+- **CSRF Protection**: Comprehensive protection against Cross-Site Request Forgery attacks
+
+### CSRF Protection
+
+The application implements robust CSRF protection using Flask-WTF with the following features:
+
+#### HTML Form Protection
+- **Automatic Token Generation**: All HTML forms include CSRF tokens via `{{ csrf_token() }}`
+- **Token Validation**: Server-side validation of all form submissions
+- **Token Expiration**: Configurable token lifetime (default: 1 hour)
+- **Secure Token Storage**: Tokens stored in secure, HTTP-only cookies
+
+#### API Route Exemption
+- **Bearer Token Authentication**: API routes with `Authorization: Bearer <token>` headers are exempt from CSRF
+- **API Key Authentication**: Routes using `X-API-Key` headers are exempt from CSRF
+- **Automatic Detection**: CSRF exemption is automatically applied based on authentication headers
+- **Manual Exemption**: Custom decorators available for specific route exemptions
+
+#### Implementation Details
+```python
+# CSRF token in HTML forms
+<form method="post" action="/auth/login">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+    <!-- form fields -->
+</form>
+
+# API routes with automatic exemption
+@bp.post("/api/convert")
+@csrf_exempt_for_api  # Automatically exempts when Bearer token or API key present
+def api_convert():
+    # Route implementation
+```
+
+#### Security Benefits
+- **Prevents CSRF Attacks**: Protects against unauthorized form submissions
+- **Session Security**: Ensures requests come from legitimate user sessions
+- **API Security**: Maintains security for API routes while allowing proper authentication
+- **Zero Configuration**: Works automatically with existing authentication systems
+
+#### Configuration
+```python
+# CSRF settings in app configuration
+app.config["WTF_CSRF_ENABLED"] = True
+app.config["WTF_CSRF_TIME_LIMIT"] = 3600  # 1 hour
+```
+
+#### Testing
+Comprehensive test suite validates:
+- Form submissions without CSRF tokens are rejected
+- Valid CSRF tokens are accepted
+- API routes with proper authentication are exempt
+- Invalid authentication headers don't bypass CSRF protection
 
 ## Monitoring and Logging
 

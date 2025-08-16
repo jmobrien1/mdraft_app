@@ -4,6 +4,7 @@
 <div class="card">
   <h2>API keys</h2>
   <form class="row" method="post" action="/admin/keys/create" style="margin:8px 0">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
     <input class="input" name="name" placeholder="Name (e.g., partner A)" required />
     <input class="input" name="rate_limit" placeholder="e.g., 60 per minute" />
     <button class="btn" type="submit">Create</button>
@@ -18,9 +19,11 @@
       </div>
       <div class="row">
         <form method="post" action="/admin/keys/{{ k.id }}/toggle">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
           <button class="btn secondary" type="submit">{{ "Revoke" if k.is_active else "Activate" }}</button>
         </form>
         <form method="post" action="/admin/keys/{{ k.id }}/rotate">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
           <button class="btn secondary" type="submit">Rotate</button>
         </form>
       </div>

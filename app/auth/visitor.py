@@ -11,7 +11,8 @@ from flask import request, g, make_response, current_app
 
 
 COOKIE_NAME = "visitor_session_id"
-DEFAULT_TTL_DAYS = 30
+# Reduced TTL from 30 days to 7-14 days for security
+DEFAULT_TTL_DAYS = 7  # Configurable via environment variable
 
 
 def get_or_create_visitor_session_id(response: Optional[make_response] = None, 
@@ -45,19 +46,14 @@ def get_or_create_visitor_session_id(response: Optional[make_response] = None,
         if secret is None:
             secret = current_app.config.get("SECRET_KEY", "default-secret")
         
-        # Set secure cookie with appropriate settings
-        # Adjust SameSite/secure based on environment
-        is_production = not current_app.debug
-        secure = is_production
-        samesite = "None" if is_production else "Lax"
-        
+        # Set secure cookie with hardened security attributes
         response.set_cookie(
             COOKIE_NAME, 
             vid, 
-            httponly=True, 
-            secure=secure,
-            samesite=samesite, 
-            max_age=60 * 60 * 24 * DEFAULT_TTL_DAYS,  # 30 days
+            httponly=True,  # Always HttpOnly
+            secure=True,    # Always Secure (HTTPS only)
+            samesite="Lax", # SameSite=Lax for better security
+            max_age=60 * 60 * 24 * get_visitor_ttl_days(),  # Configurable TTL
             path="/"
         )
     
@@ -92,3 +88,49 @@ def clear_visitor_session(response: make_response) -> make_response:
     """
     response.delete_cookie(COOKIE_NAME, path="/")
     return response
+
+
+def rotate_visitor_session(response: make_response) -> Tuple[str, make_response]:
+    """
+    Rotate the visitor session ID and set a new cookie.
+    
+    This function is called when a user logs in to invalidate
+    the previous anonymous session and create a new one.
+    
+    Args:
+        response: Flask response object to set new cookie on
+        
+    Returns:
+        Tuple of (new_visitor_session_id, response_object)
+    """
+    # Clear existing cookie
+    response = clear_visitor_session(response)
+    
+    # Generate new visitor session ID
+    new_vid = str(uuid.uuid4())
+    
+    # Set new secure cookie with hardened attributes
+    response.set_cookie(
+        COOKIE_NAME, 
+        new_vid, 
+        httponly=True,  # Always HttpOnly
+        secure=True,    # Always Secure (HTTPS only)
+        samesite="Lax", # SameSite=Lax for better security
+        max_age=60 * 60 * 24 * get_visitor_ttl_days(),  # Configurable TTL
+        path="/"
+    )
+    
+    # Store in Flask g for request context
+    g.visitor_session_id = new_vid
+    
+    return new_vid, response
+
+
+def get_visitor_ttl_days() -> int:
+    """
+    Get the visitor session TTL in days from configuration.
+    
+    Returns:
+        TTL in days (defaults to 7 days)
+    """
+    return int(current_app.config.get("VISITOR_SESSION_TTL_DAYS", DEFAULT_TTL_DAYS))

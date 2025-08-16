@@ -9,11 +9,13 @@ from flask_login import login_required
 import os
 import time
 from datetime import datetime
+from ..utils.csrf import csrf_exempt_for_api
 
 bp = Blueprint("ops", __name__, url_prefix="/api/ops")
 
 
 @bp.route("/health", methods=["GET"])
+@csrf_exempt_for_api
 def health_check():
     """Basic health check endpoint."""
     return jsonify({
@@ -25,6 +27,7 @@ def health_check():
 
 @bp.route("/ping", methods=["POST"])
 @login_required
+@csrf_exempt_for_api
 def ping_celery():
     """Test Celery worker connectivity with a ping task.
     
@@ -117,6 +120,7 @@ def ping_celery():
 
 @bp.route("/config", methods=["GET"])
 @login_required
+@csrf_exempt_for_api
 def get_config():
     """Get configuration information for debugging.
     
@@ -146,6 +150,7 @@ def get_config():
 
 @bp.route("/migration_status", methods=["GET"])
 @login_required
+@csrf_exempt_for_api
 def migration_status():
     """Get database migration status.
     

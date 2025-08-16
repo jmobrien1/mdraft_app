@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+import uuid
 from typing import Any, Dict, Optional
 from datetime import datetime
 
@@ -23,6 +24,7 @@ from .conversion import process_job
 from .storage import download_from_gcs, upload_stream_to_gcs, upload_text_to_gcs
 from .services import Storage
 from utils.db import advisory_lock, get_job_with_lock
+from .utils.logging import log_with_context, set_correlation_id, get_correlation_ids
 
 logger = logging.getLogger(__name__)
 
@@ -80,14 +82,30 @@ def update_job_status_atomic(session, job_id: int, new_status: str, allowed_stat
         rows_updated = result.rowcount
         if rows_updated > 0:
             session.commit()
-            logger.info(f"Updated job {job_id} status to {new_status}")
+            log_with_context(
+                level="INFO",
+                event="job_status_updated",
+                job_id=job_id,
+                new_status=new_status
+            )
             return True
         else:
-            logger.warning(f"Could not update job {job_id} status to {new_status} - not in allowed states: {allowed_statuses}")
+            log_with_context(
+                level="WARNING",
+                event="job_status_update_failed",
+                job_id=job_id,
+                new_status=new_status,
+                allowed_statuses=allowed_statuses
+            )
             return False
             
     except Exception as e:
-        logger.error(f"Error updating job {job_id} status: {e}")
+        log_with_context(
+            level="ERROR",
+            event="job_status_update_error",
+            job_id=job_id,
+            error=str(e)
+        )
         session.rollback()
         return False
 
@@ -168,27 +186,41 @@ def process_document_task() -> Any:
     """
     start_time = time.time()
     
+    # Set up correlation IDs for structured logging
+    task_id = request.headers.get("X-Cloud-Tasks-TaskName", str(uuid.uuid4()))
+    set_correlation_id("task_id", task_id)
+    
     # Header guard: verify this is a legitimate Cloud Tasks request
     queue_name = request.headers.get("X-Cloud-Tasks-QueueName")
     if not queue_name:
-        logger.warning("Request missing X-Cloud-Tasks-QueueName header - potential unauthorized access")
+        log_with_context(
+            level="WARNING",
+            event="unauthorized_cloud_tasks_request",
+            missing_header="X-Cloud-Tasks-QueueName"
+        )
         return jsonify({"error": "Unauthorized"}), 403
     
     # Log Cloud Tasks headers for debugging
     task_name = request.headers.get("X-Cloud-Tasks-TaskName", "unknown")
     execution_count = request.headers.get("X-Cloud-Tasks-Execution-Count", "1")
     
-    logger.info(f"Received task from queue {queue_name}, task {task_name}, execution {execution_count}")
+    log_with_context(
+        level="INFO",
+        event="cloud_tasks_request_received",
+        queue_name=queue_name,
+        task_name=task_name,
+        execution_count=execution_count
+    )
     
     try:
         # Parse request payload
         if not request.is_json:
-            logger.error("Request is not JSON")
+            log_with_context(level="ERROR", event="invalid_request_format", error="Request is not JSON")
             return jsonify({"error": "Request must be JSON"}), 400
         
         payload = request.get_json()
         if not payload:
-            logger.error("Empty request payload")
+            log_with_context(level="ERROR", event="empty_request_payload")
             return jsonify({"error": "Empty request payload"}), 400
         
         # Extract required fields
@@ -197,10 +229,26 @@ def process_document_task() -> Any:
         gcs_uri = payload.get("gcs_uri")
         
         if not all([job_id, user_id, gcs_uri]):
-            logger.error(f"Missing required fields: job_id={job_id}, user_id={user_id}, gcs_uri={gcs_uri}")
+            log_with_context(
+                level="ERROR",
+                event="missing_required_fields",
+                job_id=job_id,
+                user_id=user_id,
+                gcs_uri=gcs_uri
+            )
             return jsonify({"error": "Missing required fields: job_id, user_id, gcs_uri"}), 400
         
-        logger.info(f"Processing task for job {job_id}, user {user_id}, file {gcs_uri}")
+        # Set correlation IDs
+        set_correlation_id("job_id", str(job_id))
+        set_correlation_id("user_id", str(user_id))
+        
+        log_with_context(
+            level="INFO",
+            event="processing_document_task",
+            job_id=job_id,
+            user_id=user_id,
+            gcs_uri=gcs_uri
+        )
         
         # Add job_id to request context for logging
         request.environ["X-Job-ID"] = str(job_id)
@@ -208,13 +256,22 @@ def process_document_task() -> Any:
         # Get job information with user validation
         job_info = get_job_with_lock(db.session, job_id, user_id)
         if not job_info:
-            logger.error(f"Job {job_id} not found or does not belong to user {user_id}")
+            log_with_context(
+                level="ERROR",
+                event="job_not_found",
+                job_id=job_id,
+                user_id=user_id
+            )
             return jsonify({"error": "Job not found"}), 404
         
         # Use advisory lock to ensure only one worker processes this job
         with advisory_lock(db.session, job_id, timeout_seconds=30) as lock_acquired:
             if not lock_acquired:
-                logger.warning(f"Could not acquire advisory lock for job {job_id}, skipping")
+                log_with_context(
+                    level="WARNING",
+                    event="advisory_lock_failed",
+                    job_id=job_id
+                )
                 return jsonify({
                     "status": "skipped",
                     "message": "Job is being processed by another worker",

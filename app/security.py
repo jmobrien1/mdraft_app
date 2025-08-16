@@ -1,11 +1,13 @@
 import os
 import filetype
+from .config import get_config
 
-# max sizes in bytes per category
+# Get size limits from centralized configuration
+config = get_config()
 MAX_BY_TYPE = {
-    "text": 5 * 1024 * 1024,       # 5 MB
-    "doc":  20 * 1024 * 1024,      # 20 MB (docx, pptx, xlsx, pdf)
-    "bin":  10 * 1024 * 1024,      # 10 MB fallback
+    "text": config.get_file_size_limit("text"),
+    "doc": config.get_file_size_limit("office"),  # office documents
+    "bin": config.get_file_size_limit("binary"),  # fallback
 }
 
 ALLOWED_MIMES = {

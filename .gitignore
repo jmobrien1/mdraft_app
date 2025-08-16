@@ -67,3 +67,7 @@ nosetests.xml
 coverage.xml
 *.cover
 .hypothesis/
+
+# Security reports
+pip-audit-report.json
+safety-report.json

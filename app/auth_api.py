@@ -3,6 +3,7 @@ from datetime import datetime
 from flask import request, abort
 from .models_apikey import ApiKey
 from . import db
+from .utils.rate_limiting import get_rate_limit_key, get_upload_rate_limit_key, _get_api_key
 
 REQUIRE_API_KEY = os.getenv("REQUIRE_API_KEY", "0").lower() in ("1","true","yes")
 
@@ -28,15 +29,53 @@ def require_api_key_if_configured():
         abort(401, description="missing_or_invalid_api_key")
 
 def rate_limit_key_func():
-    # Limiter identity: use API key if present, else client IP
-    return _raw_key() or request.remote_addr or "anonymous"
+    """
+    Enhanced rate limit key function that prioritizes user_id, then API key, then IP.
+    
+    This function is used by Flask-Limiter to determine the rate limit key
+    for the current request.
+    """
+    return get_rate_limit_key()
 
 def rate_limit_for_convert():
-    # Per-key limit string; fallback to default env or safe default
+    """
+    Get the rate limit string for conversion endpoints.
+    
+    Returns:
+        Rate limit string (e.g., "20 per minute")
+    """
+    # Check if user has a custom rate limit via API key
     ak = fetch_valid_key()
     if ak and ak.rate_limit:
         return ak.rate_limit
-    return os.getenv("CONVERT_RATE_LIMIT_DEFAULT", "30 per minute")
+    
+    # Get default rate limit from configuration
+    from .config import get_config
+    config = get_config()
+    return config.get_rate_limit("convert")
+
+def rate_limit_for_upload():
+    """
+    Get the rate limit string for upload endpoints.
+    
+    Returns:
+        Rate limit string (e.g., "20 per minute" for authenticated, "10 per minute" for anonymous)
+    """
+    # Check if user has a custom rate limit via API key
+    ak = fetch_valid_key()
+    if ak and ak.rate_limit:
+        return ak.rate_limit
+    
+    # Get default rate limit from configuration
+    from .config import get_config
+    config = get_config()
+    
+    # Use different limits for authenticated vs anonymous users
+    if hasattr(request, 'user') and request.user and hasattr(request.user, 'is_authenticated') and request.user.is_authenticated:
+        return config.get_rate_limit("convert")  # Same as convert for authenticated users
+    else:
+        # Stricter limit for anonymous users
+        return "10 per minute"
 
 def generate_key():
     # 48 chars urlsafe by default; enough entropy + fits DB

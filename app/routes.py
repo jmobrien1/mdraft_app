@@ -13,6 +13,7 @@ import os
 from typing import Any, Dict
 
 from flask import Blueprint, current_app, jsonify, request, send_from_directory, abort, make_response
+from flask_login import current_user
 from sqlalchemy import text
 
 from . import db, limiter
@@ -25,6 +26,8 @@ from .celery_tasks import enqueue_conversion_task
 from .services.ai_tools import run_prompt
 from .services.text_loader import get_rfp_text
 from .utils.authz import allow_session_or_api_key
+from .utils.csrf import csrf_exempt_for_api
+from .utils.rate_limiting import get_upload_rate_limit_key
 from .schemas.free_capabilities import (
     COMPLIANCE_MATRIX_SCHEMA,
     EVAL_CRITERIA_SCHEMA,
@@ -48,6 +51,8 @@ def _prompt_path(current_app, hyphen_name: str, underscore_name: str) -> str:
 
 
 @bp.route("/", methods=["GET"])
+@limiter.limit(lambda: current_app.config.get("INDEX_RATE_LIMIT", "50 per minute"), 
+               key_func=lambda: f"index:ip:{request.remote_addr}")
 def index() -> Any:
     """Return a welcome message indicating the service is running."""
     return jsonify({"status": "ok", "message": "Welcome to mdraft!"})
@@ -76,6 +81,7 @@ def healthz():
 
 
 @bp.get("/api/dev/diag")
+@csrf_exempt_for_api
 def dev_diag():
     import os
     from flask import jsonify
@@ -84,6 +90,7 @@ def dev_diag():
 
 
 @bp.get("/api/dev/check-prompts")
+@csrf_exempt_for_api
 def dev_check_prompts():
     import os
     base = os.path.join(current_app.root_path, "prompts", "free_tier")
@@ -99,6 +106,7 @@ def dev_check_prompts():
 
 
 @bp.route("/api/session/bootstrap", methods=["GET"])
+@csrf_exempt_for_api
 def session_bootstrap():
     """Bootstrap a visitor session for anonymous users.
     
@@ -117,6 +125,7 @@ def session_bootstrap():
 
 
 @bp.route("/api/me/usage", methods=["GET"])
+@csrf_exempt_for_api
 def get_usage():
     """Get usage information for the current user or anonymous visitor.
     
@@ -126,19 +135,47 @@ def get_usage():
     Returns:
         JSON response with usage information
     """
-    # Since Flask-Login is disabled, we'll return anonymous usage for now
-    # In a real implementation, you'd check for authentication tokens/sessions
-    return jsonify({
-        "plan": "free-anon",
-        "conversions_used": 0,
-        "limit": 1,
-        "can_convert": True,
-        "authenticated": False
-    }), 200
+    from .auth.ownership import get_owner_filter
+    
+    if getattr(current_user, "is_authenticated", False):
+        # Authenticated user - get actual usage
+        from .services.query_service import JobQueryService
+        owner_filter = get_owner_filter()
+        
+        if 'user_id' in owner_filter:
+            job_count = JobQueryService.get_job_count_by_owner(user_id=owner_filter['user_id'])
+        else:
+            job_count = 0
+        
+        return jsonify({
+            "plan": getattr(current_user, "plan", "F&F"),
+            "conversions_used": job_count,
+            "limit": 100,  # TODO: Get from user plan
+            "can_convert": True,
+            "authenticated": True
+        }), 200
+    else:
+        # Anonymous user - get usage for visitor session
+        from .services.query_service import JobQueryService
+        owner_filter = get_owner_filter()
+        
+        if 'visitor_session_id' in owner_filter:
+            job_count = JobQueryService.get_job_count_by_owner(visitor_session_id=owner_filter['visitor_session_id'])
+        else:
+            job_count = 0
+        
+        return jsonify({
+            "plan": "free-anon",
+            "conversions_used": job_count,
+            "limit": 5,  # Anonymous limit
+            "can_convert": job_count < 5,
+            "authenticated": False
+        }), 200
 
 
 @bp.route("/upload", methods=["POST"])
-@limiter.limit(os.getenv("CONVERT_RATE_LIMIT_DEFAULT", "20 per minute"))
+@limiter.limit(lambda: current_app.config.get("UPLOAD_RATE_LIMIT", "20 per minute"), 
+               key_func=lambda: get_upload_rate_limit_key())
 def upload() -> Any:
     """Handle document upload and enqueue a conversion job.
 
@@ -149,6 +186,11 @@ def upload() -> Any:
     and a background task is enqueued. A JSON response containing the job ID
     is returned.
     """
+    # Initialize visitor session for anonymous users
+    from .auth.visitor import get_or_create_visitor_session_id
+    resp = make_response()
+    vid, resp = get_or_create_visitor_session_id(resp)
+    
     # Check for file in request
     if "file" not in request.files:
         return jsonify({"error": "No file part"}), 400
@@ -156,9 +198,22 @@ def upload() -> Any:
     if file.filename == "":
         return jsonify({"error": "No selected file"}), 400
     
-    # Validate file extension
-    if not is_file_allowed(file.filename):
-        return jsonify({"error": "File type not allowed"}), 400
+    # Validate file using comprehensive validation system
+    from .utils.validation import validate_upload_file, ValidationError
+    
+    # Get correlation ID for logging
+    correlation_id = request.headers.get('X-Correlation-ID') or request.headers.get('X-Request-ID')
+    
+    validation_result = validate_upload_file(file.stream, file.filename, correlation_id)
+    
+    if not validation_result.is_valid:
+        error_response = {"error": validation_result.error.value}
+        if validation_result.error == ValidationError.FILE_TOO_LARGE:
+            return jsonify(error_response), 413
+        elif validation_result.error == ValidationError.EMPTY_FILE:
+            return jsonify({"error": "file_empty"}), 400
+        else:
+            return jsonify(error_response), 400
     
     # Generate a unique filename using job ID
     job_id_str = generate_job_id()
@@ -181,15 +236,24 @@ def upload() -> Any:
         current_app.logger.error(f"Failed to upload file {filename}: {e}")
         return jsonify({"error": "Upload failed"}), 500
     
+    # Determine user_id based on authentication status
+    from .auth.ownership import get_owner_id_for_creation
+    user_id = get_owner_id_for_creation()
+    
     # Create job record in the database with status='queued'
-    # For this MVP we don't have authentication, so user_id is 1
-    # In a multi-user system current_user.id would be used instead
-    job = Job(
-        user_id=1,
-        filename=filename,
-        status="queued",
-        gcs_uri=gcs_uri
-    )
+    job_fields = {
+        "filename": filename,
+        "status": "queued",
+        "gcs_uri": gcs_uri
+    }
+    
+    if user_id is not None:
+        job_fields["user_id"] = user_id
+    else:
+        # Anonymous user - use visitor session ID
+        job_fields["visitor_session_id"] = vid
+    
+    job = Job(**job_fields)
     db.session.add(job)
     db.session.commit()
     
@@ -208,7 +272,12 @@ def upload() -> Any:
         current_app.logger.exception(f"Error enqueueing conversion task for job {job.id}: {e}")
         # Don't fail the upload if task enqueueing fails
     
-    return jsonify({"job_id": job.id}), 202
+    response = jsonify({"job_id": job.id})
+    # Copy cookies from visitor session response
+    for cookie_name, cookie_value in resp.headers.getlist('Set-Cookie'):
+        response.headers.add('Set-Cookie', cookie_value)
+    
+    return response, 202
 
 
 @bp.route("/jobs/<int:job_id>", methods=["GET"])
@@ -221,7 +290,19 @@ def job_status(job_id: int) -> Any:
     # Add job_id to request context for logging
     request.environ["X-Job-ID"] = str(job_id)
     
-    job = db.session.get(Job, job_id)
+    # Get job with access control and eager loading
+    from .auth.ownership import get_owner_filter
+    from .services.query_service import JobQueryService
+    
+    owner_filter = get_owner_filter()
+    
+    # Use optimized query service with eager loading
+    if 'user_id' in owner_filter:
+        job = JobQueryService.get_job_by_id(job_id, user_id=owner_filter['user_id'])
+    elif 'visitor_session_id' in owner_filter:
+        job = JobQueryService.get_job_by_id(job_id, visitor_session_id=owner_filter['visitor_session_id'])
+    else:
+        job = None
     if job is None:
         return jsonify({"error": "Job not found"}), 404
     
@@ -268,6 +349,32 @@ def download_file(storage_path: str) -> Any:
     be served directly from GCS using temporary signed URLs.
     """
     try:
+        # Extract job ID from storage path for access control
+        # Path format: uploads/{job_id}/{filename}
+        path_parts = storage_path.split('/')
+        if len(path_parts) >= 2 and path_parts[0] == 'uploads':
+            try:
+                job_id = int(path_parts[1])
+                # Verify user has access to this job
+                from .auth.ownership import get_owner_filter
+                from .services.query_service import JobQueryService
+                
+                owner_filter = get_owner_filter()
+                
+                # Use optimized query service with eager loading
+                if 'user_id' in owner_filter:
+                    job = JobQueryService.get_job_by_id(job_id, user_id=owner_filter['user_id'])
+                elif 'visitor_session_id' in owner_filter:
+                    job = JobQueryService.get_job_by_id(job_id, visitor_session_id=owner_filter['visitor_session_id'])
+                else:
+                    job = None
+                
+                if job is None:
+                    return jsonify({"error": "Access denied"}), 403
+            except (ValueError, IndexError):
+                # Invalid path format
+                return jsonify({"error": "Invalid file path"}), 400
+        
         storage = Storage()
         
         # Check if file exists
@@ -319,7 +426,8 @@ def _stub_on() -> bool:
 
 
 @bp.route("/api/generate/compliance-matrix", methods=["POST"])
-@limiter.limit(os.getenv("AI_RATE_LIMIT_DEFAULT", "10 per minute"))
+@limiter.limit("10 per minute")  # Rate limit configured in centralized config
+@csrf_exempt_for_api
 def generate_compliance_matrix() -> Any:
     """Generate compliance matrix from RFP document."""
     if not allow_session_or_api_key():
@@ -390,7 +498,8 @@ def generate_compliance_matrix() -> Any:
 
 @bp.route("/api/generate/evaluation-criteria", methods=["POST"])
 @bp.route("/api/generate/evaluation_criteria", methods=["POST"])
-@limiter.limit(os.getenv("AI_RATE_LIMIT_DEFAULT", "10 per minute"))
+@limiter.limit("10 per minute")  # Rate limit configured in centralized config
+@csrf_exempt_for_api
 def generate_evaluation_criteria() -> Any:
     """Generate evaluation criteria from RFP document."""
     if not allow_session_or_api_key():
@@ -451,7 +560,8 @@ def generate_evaluation_criteria() -> Any:
 
 
 @bp.route("/api/generate/annotated-outline", methods=["POST"])
-@limiter.limit(os.getenv("AI_RATE_LIMIT_DEFAULT", "10 per minute"))
+@limiter.limit("10 per minute")  # Rate limit configured in centralized config
+@csrf_exempt_for_api
 def generate_annotated_outline() -> Any:
     """Generate annotated outline from RFP document."""
     if not allow_session_or_api_key():
@@ -512,7 +622,8 @@ def generate_annotated_outline() -> Any:
 
 
 @bp.route("/api/generate/submission-checklist", methods=["POST"])
-@limiter.limit(os.getenv("AI_RATE_LIMIT_DEFAULT", "10 per minute"))
+@limiter.limit("10 per minute")  # Rate limit configured in centralized config
+@csrf_exempt_for_api
 def generate_submission_checklist() -> Any:
     """Generate submission checklist from RFP document."""
     if not allow_session_or_api_key():
@@ -573,6 +684,7 @@ def generate_submission_checklist() -> Any:
 
 
 @bp.get("/api/dev/openai-ping")
+@csrf_exempt_for_api
 def dev_openai_ping():
     from app.services.llm_client import chat_json
     try:
@@ -592,6 +704,7 @@ def dev_openai_ping():
 
 
 @bp.get("/api/dev/openai-ping-detailed")
+@csrf_exempt_for_api
 def dev_openai_ping_detailed():
     from app.services.llm_client import chat_json
     try:
@@ -607,6 +720,7 @@ def dev_openai_ping_detailed():
 
 
 @bp.post("/api/dev/gen-smoke")
+@csrf_exempt_for_api
 def dev_gen_smoke():
     from flask import request, jsonify, current_app
     from app.services.ai_tools import run_prompt
@@ -647,6 +761,7 @@ def dev_gen_smoke():
 
 
 @bp.get("/api/dev/selftest")
+@csrf_exempt_for_api
 def dev_selftest():
     import os
     from sqlalchemy import text

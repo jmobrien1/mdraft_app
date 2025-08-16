@@ -21,6 +21,7 @@ from ..services.rfp_data_layer import RFPDataLayer
 from ..agents.compliance_agent import ComplianceAgent
 from ..conversion import process_job
 from ..auth.utils import get_request_user_id_or_none
+from ..utils.csrf import csrf_exempt_for_api
 
 
 bp = Blueprint("agents", __name__, url_prefix="/api/agents")
@@ -29,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 @bp.route("/compliance-matrix/run", methods=["POST"])
 @login_required
+@csrf_exempt_for_api
 def run_compliance_matrix_agent() -> Any:
     """Run the Compliance Matrix Agent on a proposal.
     
@@ -107,6 +109,7 @@ def run_compliance_matrix_agent() -> Any:
 
 @bp.route("/compliance-matrix/proposals", methods=["POST"])
 @login_required
+@csrf_exempt_for_api
 def create_proposal() -> Any:
     """Create a new proposal for compliance matrix processing.
     
@@ -180,6 +183,7 @@ def create_proposal() -> Any:
 
 @bp.route("/compliance-matrix/proposals", methods=["GET"])
 @login_required
+@csrf_exempt_for_api
 def list_proposals() -> Any:
     """List all proposals for the current authenticated user.
     
@@ -242,6 +246,7 @@ def list_proposals() -> Any:
 
 @bp.route("/compliance-matrix/proposals/<int:proposal_id>/documents", methods=["GET"])
 @login_required
+@csrf_exempt_for_api
 def get_proposal_documents(proposal_id: int) -> Any:
     """Get all documents for a proposal.
     
@@ -294,6 +299,7 @@ def get_proposal_documents(proposal_id: int) -> Any:
 
 @bp.route("/compliance-matrix/proposals/<int:proposal_id>/documents", methods=["POST"])
 @login_required
+@csrf_exempt_for_api
 def add_document_to_proposal(proposal_id: int) -> Any:
     """Add a document to a proposal for processing.
     
@@ -481,6 +487,7 @@ def add_document_to_proposal(proposal_id: int) -> Any:
 
 @bp.route("/compliance-matrix/proposals/<int:proposal_id>/requirements", methods=["GET"])
 @login_required
+@csrf_exempt_for_api
 def get_proposal_requirements(proposal_id: int) -> Any:
     """Get all requirements for a proposal.
     
@@ -561,6 +568,7 @@ def get_proposal_requirements(proposal_id: int) -> Any:
 
 @bp.route("/compliance-matrix/requirements/<string:requirement_id>", methods=["PUT"])
 @login_required
+@csrf_exempt_for_api
 def update_requirement(requirement_id: str) -> Any:
     """Update a requirement (assign owner, change status, add notes).
     
@@ -626,6 +634,7 @@ def update_requirement(requirement_id: str) -> Any:
 
 @bp.route("/compliance-matrix/proposals/<int:proposal_id>/export", methods=["GET"])
 @login_required
+@csrf_exempt_for_api
 def export_compliance_matrix(proposal_id: int) -> Any:
     """Export compliance matrix as CSV, XLSX, or PDF.
     
@@ -798,6 +807,7 @@ def _export_pdf(requirements: List[Requirement], proposal_name: str) -> Any:
 
 @bp.route("/compliance-matrix/proposals/<int:proposal_id>", methods=["GET"])
 @login_required
+@csrf_exempt_for_api
 def get_proposal_detail(proposal_id: int) -> Any:
     """Get detailed information about a specific proposal.
     
@@ -852,6 +862,7 @@ def get_proposal_detail(proposal_id: int) -> Any:
 
 @bp.route("/compliance-matrix/proposals/<int:proposal_id>", methods=["DELETE"])
 @login_required
+@csrf_exempt_for_api
 def delete_proposal(proposal_id: int) -> Any:
     """Delete a proposal and all its associated documents and requirements.
     
@@ -888,6 +899,7 @@ def delete_proposal(proposal_id: int) -> Any:
 
 @bp.route("/compliance-matrix/proposals/<int:proposal_id>/documents/<int:document_id>", methods=["DELETE"])
 @login_required
+@csrf_exempt_for_api
 def detach_document_from_proposal(proposal_id: int, document_id: int) -> Any:
     """Detach a document from a proposal.
     
