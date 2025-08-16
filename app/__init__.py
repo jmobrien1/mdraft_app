@@ -320,7 +320,7 @@ def create_app() -> Flask:
     from .api.agents import bp as agents_bp
     app.register_blueprint(agents_bp)
     
-    from .api.ops import ops as ops_bp
+    from .api.ops import bp as ops_bp
     app.register_blueprint(ops_bp)
     
     from .api.errors import errors
