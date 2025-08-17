@@ -408,6 +408,8 @@ def create_app() -> Flask:
     
     # --- Session Configuration ---
     # Single code path for session configuration with hardened security
+    redis_client = None  # Will hold the Redis client for session storage
+    
     if config.SESSION_BACKEND == "redis":
         try:
             app.logger.info("Configuring Redis session backend...")
@@ -426,14 +428,16 @@ def create_app() -> Flask:
                 app.config["SESSION_TYPE"] = "filesystem"
                 app.logger.info("Using filesystem session backend (fallback)")
                 
-            # Test Redis connection
+            # Test Redis connection and create client for session storage
             if app.config.get("SESSION_REDIS_URL"):
                 import redis
                 redis_client = redis.from_url(
                     app.config["SESSION_REDIS_URL"], 
                     decode_responses=True,
                     socket_connect_timeout=5,
-                    socket_timeout=5
+                    socket_timeout=5,
+                    retry_on_timeout=True,
+                    health_check_interval=30
                 )
                 redis_client.ping()
                 app.logger.info("Redis session connection successful")
@@ -481,7 +485,14 @@ def create_app() -> Flask:
     # Initialize session extension after configuration is set
     global session
     session = Session()
-    session.init_app(app)
+    
+    # If we have a Redis client, pass it explicitly to Flask-Session
+    if redis_client and app.config.get("SESSION_TYPE") == "redis":
+        app.logger.info("Initializing Flask-Session with explicit Redis client")
+        session.init_app(app, redis_client)
+    else:
+        app.logger.info("Initializing Flask-Session with default configuration")
+        session.init_app(app)
     
     # Test Redis connectivity for all Redis URLs during startup
     try:

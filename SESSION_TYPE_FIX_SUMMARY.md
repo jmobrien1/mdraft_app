@@ -17,19 +17,33 @@ This error occurred because Flask-Session was being initialized at the module le
 
 ## Solution Implemented
 
-### 1. Deferred Session Initialization
+### 1. Deferred Session Initialization with Explicit Redis Client
 
 **File**: `app/__init__.py`
 
 **Changes**:
 - Changed `session: Session = Session()` to `session: Optional[Session] = None`
 - Added `from typing import Any, Dict, Optional` import
-- Moved session initialization to after configuration is set:
+- Moved session initialization to after configuration is set
+- Added explicit Redis client creation and passing to Flask-Session:
   ```python
-  # Initialize session extension after configuration is set
+  # Create Redis client for session storage
+  redis_client = redis.from_url(
+      app.config["SESSION_REDIS_URL"], 
+      decode_responses=True,
+      socket_connect_timeout=5,
+      socket_timeout=5,
+      retry_on_timeout=True,
+      health_check_interval=30
+  )
+  
+  # Initialize session extension with explicit Redis client
   global session
   session = Session()
-  session.init_app(app)
+  if redis_client and app.config.get("SESSION_TYPE") == "redis":
+      session.init_app(app, redis_client)
+  else:
+      session.init_app(app)
   ```
 
 ### 2. Fixed Configuration Default Handling
@@ -73,9 +87,11 @@ The fix was verified with comprehensive tests covering:
 ## Impact
 
 - **Fixes**: The `ValueError: Unrecognized value for SESSION_TYPE: null` error
+- **Fixes**: The `redis.exceptions.ConnectionError: Error 111 connecting to localhost:6379` error
 - **Maintains**: All existing session functionality and security features
 - **Improves**: Configuration robustness for empty environment variables
 - **Preserves**: Backward compatibility with existing deployments
+- **Ensures**: Flask-Session uses the correct Redis URL instead of defaulting to localhost
 
 ## Deployment Notes
 
@@ -83,3 +99,4 @@ The fix was verified with comprehensive tests covering:
 - Existing `SESSION_BACKEND=redis` configurations will continue to work
 - The fix is backward compatible and safe to deploy
 - Pre-deploy scripts will now work correctly with the session configuration
+- Flask-Session will now use the explicit Redis client instead of defaulting to localhost
