@@ -35,6 +35,8 @@ def validate_environment():
     # Check optional but important variables
     optional_vars = [
         'REDIS_URL',
+        'SESSION_REDIS_URL',
+        'FLASK_LIMITER_STORAGE_URI',
         'SESSION_BACKEND',
         'LOG_LEVEL',
         'SENTRY_DSN',
@@ -43,7 +45,23 @@ def validate_environment():
     for var in optional_vars:
         value = os.getenv(var)
         if value:
-            print(f"✅ {var}: {'*' * min(len(value), 10)}... (length: {len(value)})")
+            # Check for trailing whitespace/newlines in critical URLs
+            if var in ['REDIS_URL', 'SESSION_REDIS_URL', 'FLASK_LIMITER_STORAGE_URI']:
+                if value != value.strip():
+                    print(f"⚠️  {var}: HAS TRAILING WHITESPACE/NEWLINES")
+                    print(f"   Original: {repr(value)}")
+                    print(f"   Stripped: {repr(value.strip())}")
+                else:
+                    print(f"✅ {var}: {'*' * min(len(value), 10)}... (length: {len(value)})")
+                
+                # Check Redis URL scheme
+                if var in ['REDIS_URL', 'SESSION_REDIS_URL', 'FLASK_LIMITER_STORAGE_URI'] and value:
+                    if value.startswith('redis://') and 'upstash' in value.lower():
+                        print(f"⚠️  {var}: Uses redis:// but Upstash requires rediss://")
+                    elif value.startswith('rediss://'):
+                        print(f"✅ {var}: Uses correct rediss:// scheme")
+            else:
+                print(f"✅ {var}: {'*' * min(len(value), 10)}... (length: {len(value)})")
         else:
             print(f"⚠️  {var}: NOT SET (optional)")
     

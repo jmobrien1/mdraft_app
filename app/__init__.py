@@ -48,9 +48,15 @@ session: Session = Session()
 
 # GLOBAL limiter (exported as app.limiter so routes can import it)
 # Note: Limiter is initialized before config is available, so we use ENV directly
+storage_uri = ENV.get("FLASK_LIMITER_STORAGE_URI")
+if storage_uri:
+    # Strip any trailing whitespace/newlines that could break Flask-Limiter
+    storage_uri = storage_uri.strip()
+    print(f"Flask-Limiter storage URI: {storage_uri[:20]}..." if len(storage_uri) > 20 else storage_uri)
+
 limiter = Limiter(
     key_func=get_remote_address,
-    storage_uri=ENV.get("FLASK_LIMITER_STORAGE_URI"),
+    storage_uri=storage_uri,
     default_limits=[ENV.get("GLOBAL_RATE_LIMIT", "120 per minute")],
 )
 
@@ -215,8 +221,20 @@ def create_app() -> Flask:
     # Flask-Limiter configuration
     app.config.setdefault("RATELIMIT_HEADERS_ENABLED", True)
 
-    # Initialize the global limiter on the app
-    limiter.init_app(app)
+    # Initialize the global limiter on the app with error handling
+    try:
+        limiter.init_app(app)
+        app.logger.info("Flask-Limiter initialized successfully")
+    except Exception as e:
+        app.logger.error(f"Flask-Limiter initialization failed: {e}")
+        app.logger.error(f"Limiter error type: {type(e).__name__}")
+        app.logger.error(f"Limiter error details: {str(e)}")
+        # In production, we should fail fast for rate limiting issues
+        if os.getenv("FLASK_ENV") == "production":
+            raise RuntimeError(f"Flask-Limiter initialization failed: {e}")
+        else:
+            app.logger.warning("Flask-Limiter disabled due to initialization failure")
+            limiter = None
 
     # Exempt health checks (keep Render happy)
     try:
@@ -398,6 +416,34 @@ def create_app() -> Flask:
     
     # Initialize session extension
     session.init_app(app)
+    
+    # Test Redis connectivity for all Redis URLs during startup
+    try:
+        import redis
+        redis_urls_to_test = []
+        
+        if config.SESSION_REDIS_URL:
+            redis_urls_to_test.append(("SESSION_REDIS_URL", config.SESSION_REDIS_URL))
+        if config.REDIS_URL:
+            redis_urls_to_test.append(("REDIS_URL", config.REDIS_URL))
+        if config.FLASK_LIMITER_STORAGE_URI:
+            redis_urls_to_test.append(("FLASK_LIMITER_STORAGE_URI", config.FLASK_LIMITER_STORAGE_URI))
+        
+        for name, url in redis_urls_to_test:
+            try:
+                clean_url = url.strip()
+                client = redis.from_url(clean_url, decode_responses=True, socket_connect_timeout=5, socket_timeout=5)
+                client.ping()
+                app.logger.info(f"Redis connection test successful for {name}")
+            except Exception as e:
+                app.logger.error(f"Redis connection test failed for {name}: {e}")
+                if os.getenv("FLASK_ENV") == "production":
+                    app.logger.error(f"Redis connection failure for {name} in production - this may cause issues")
+                
+    except ImportError:
+        app.logger.warning("redis package not available - skipping Redis connection tests")
+    except Exception as e:
+        app.logger.error(f"Unexpected error during Redis connection testing: {e}")
     
     # CSRF Configuration
     app.config.setdefault("WTF_CSRF_ENABLED", True)

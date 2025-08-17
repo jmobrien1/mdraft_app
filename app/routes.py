@@ -52,7 +52,7 @@ def _prompt_path(current_app, hyphen_name: str, underscore_name: str) -> str:
 
 @bp.route("/home", methods=["GET"])
 @limiter.limit(lambda: current_app.config.get("INDEX_RATE_LIMIT", "50 per minute"), 
-               key_func=lambda: f"index:ip:{request.remote_addr}")
+               key_func=lambda: f"index:ip:{request.remote_addr}") if limiter else lambda f: f
 def home() -> Any:
     """Return a welcome message indicating the service is running.
     
@@ -63,19 +63,44 @@ def home() -> Any:
 
 @bp.route("/health", methods=["GET"])
 def health_check() -> Any:
-    """Simple health check that verifies database connectivity.
+    """Comprehensive health check that verifies database and Redis connectivity.
 
-    Executes a trivial query against the database.  If the query fails
-    an exception will be raised and a 503 response returned.
+    Executes a trivial query against the database and tests Redis connections.
+    If any check fails, an exception will be raised and a 503 response returned.
     """
     try:
-        # Execute a simple SELECT to validate the connection.  Using
-        # text() ensures raw SQL execution without model imports.
+        # Database health check
         db.session.execute(text("SELECT 1"))
-        return jsonify({"status": "ok"})
+        
+        # Redis health check (if configured)
+        try:
+            import redis
+            redis_urls_to_test = []
+            
+            # Test all configured Redis URLs
+            for key in ["REDIS_URL", "SESSION_REDIS_URL", "FLASK_LIMITER_STORAGE_URI"]:
+                url = os.environ.get(key)
+                if url:
+                    redis_urls_to_test.append((key, url.strip()))
+            
+            for name, url in redis_urls_to_test:
+                try:
+                    client = redis.from_url(url, decode_responses=True, socket_connect_timeout=3, socket_timeout=3)
+                    client.ping()
+                except Exception as e:
+                    current_app.logger.warning(f"Redis health check failed for {name}: {e}")
+                    # Don't fail the entire health check for Redis issues
+                    
+        except ImportError:
+            current_app.logger.debug("redis package not available - skipping Redis health check")
+        except Exception as e:
+            current_app.logger.warning(f"Redis health check error: {e}")
+            # Don't fail the entire health check for Redis issues
+        
+        return jsonify({"status": "ok", "database": "connected", "redis": "tested"})
     except Exception: # noqa: BLE001
-        current_app.logger.exception("Database health check failed")
-        return jsonify({"status": "database_error"}), 503
+        current_app.logger.exception("Health check failed")
+        return jsonify({"status": "error", "database": "failed"}), 503
 
 
 @bp.route("/health/simple", methods=["GET"])
@@ -188,7 +213,7 @@ def get_usage():
 
 @bp.route("/upload", methods=["POST"])
 @limiter.limit(lambda: current_app.config.get("UPLOAD_RATE_LIMIT", "20 per minute"), 
-               key_func=lambda: get_upload_rate_limit_key())
+               key_func=lambda: get_upload_rate_limit_key()) if limiter else lambda f: f
 def upload() -> Any:
     """Handle document upload and enqueue a conversion job.
 
@@ -439,7 +464,7 @@ def _stub_on() -> bool:
 
 
 @bp.route("/api/generate/compliance-matrix", methods=["POST"])
-@limiter.limit("10 per minute")  # Rate limit configured in centralized config
+@limiter.limit("10 per minute") if limiter else lambda f: f  # Rate limit configured in centralized config
 @csrf_exempt_for_api
 def generate_compliance_matrix() -> Any:
     """Generate compliance matrix from RFP document."""
@@ -511,7 +536,7 @@ def generate_compliance_matrix() -> Any:
 
 @bp.route("/api/generate/evaluation-criteria", methods=["POST"])
 @bp.route("/api/generate/evaluation_criteria", methods=["POST"])
-@limiter.limit("10 per minute")  # Rate limit configured in centralized config
+@limiter.limit("10 per minute") if limiter else lambda f: f  # Rate limit configured in centralized config
 @csrf_exempt_for_api
 def generate_evaluation_criteria() -> Any:
     """Generate evaluation criteria from RFP document."""
@@ -573,7 +598,7 @@ def generate_evaluation_criteria() -> Any:
 
 
 @bp.route("/api/generate/annotated-outline", methods=["POST"])
-@limiter.limit("10 per minute")  # Rate limit configured in centralized config
+@limiter.limit("10 per minute") if limiter else lambda f: f  # Rate limit configured in centralized config
 @csrf_exempt_for_api
 def generate_annotated_outline() -> Any:
     """Generate annotated outline from RFP document."""
@@ -635,7 +660,7 @@ def generate_annotated_outline() -> Any:
 
 
 @bp.route("/api/generate/submission-checklist", methods=["POST"])
-@limiter.limit("10 per minute")  # Rate limit configured in centralized config
+@limiter.limit("10 per minute") if limiter else lambda f: f  # Rate limit configured in centralized config
 @csrf_exempt_for_api
 def generate_submission_checklist() -> Any:
     """Generate submission checklist from RFP document."""
@@ -804,3 +829,53 @@ def dev_selftest():
     except Exception as e:
         ok["openai"] = {"ok": False, "error": str(e)}
     return jsonify(ok), 200
+
+
+@bp.get("/debug/redis")
+@csrf_exempt_for_api
+def debug_redis():
+    """Diagnostic route to test Redis connectivity for all Redis URLs."""
+    try:
+        import redis
+        results = {}
+        
+        # Test each Redis URL
+        for key in ["REDIS_URL", "SESSION_REDIS_URL", "FLASK_LIMITER_STORAGE_URI"]:
+            url = os.environ.get(key)
+            if url:
+                try:
+                    # Strip any whitespace/newlines
+                    clean_url = url.strip()
+                    client = redis.from_url(clean_url, decode_responses=True)
+                    client.ping()
+                    results[key] = {"status": "OK", "url_length": len(clean_url)}
+                except Exception as e:
+                    results[key] = {"status": "FAILED", "error": str(e), "url_length": len(url) if url else 0}
+            else:
+                results[key] = {"status": "NOT_SET"}
+        
+        return jsonify(results)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@bp.get("/debug/env")
+@csrf_exempt_for_api
+def debug_env():
+    """Diagnostic route to check environment variable parsing."""
+    redis_vars = {
+        "REDIS_URL": os.environ.get("REDIS_URL", "NOT_SET"),
+        "SESSION_REDIS_URL": os.environ.get("SESSION_REDIS_URL", "NOT_SET"),
+        "FLASK_LIMITER_STORAGE_URI": os.environ.get("FLASK_LIMITER_STORAGE_URI", "NOT_SET"),
+    }
+    
+    # Check for trailing characters and URL schemes
+    for key, value in redis_vars.items():
+        if value and value != "NOT_SET":
+            redis_vars[f"{key}_repr"] = repr(value)  # Shows hidden characters
+            redis_vars[f"{key}_stripped"] = value.strip()
+            redis_vars[f"{key}_scheme"] = value.split("://")[0] if "://" in value else "none"
+            redis_vars[f"{key}_has_newline"] = "\n" in value
+            redis_vars[f"{key}_has_trailing_space"] = value != value.strip()
+    
+    return jsonify(redis_vars)

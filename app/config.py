@@ -305,6 +305,9 @@ class AppConfig:
         
         # Rate limiting storage
         self.FLASK_LIMITER_STORAGE_URI = os.getenv("FLASK_LIMITER_STORAGE_URI")
+        if self.FLASK_LIMITER_STORAGE_URI:
+            # Strip any trailing whitespace/newlines that could break Flask-Limiter
+            self.FLASK_LIMITER_STORAGE_URI = self.FLASK_LIMITER_STORAGE_URI.strip()
         self.RATE_ALLOWLIST = os.getenv("RATE_ALLOWLIST", "")
         
         # Stripe configuration
@@ -496,6 +499,19 @@ class AppConfig:
                     errors.append("SENTRY_DSN must be a valid URL")
             except Exception:
                 errors.append("SENTRY_DSN must be a valid URL")
+        
+        # Flask-Limiter storage URI validation
+        if self.FLASK_LIMITER_STORAGE_URI:
+            try:
+                parsed = urlparse(self.FLASK_LIMITER_STORAGE_URI)
+                if parsed.scheme not in ["redis", "rediss"]:
+                    errors.append("FLASK_LIMITER_STORAGE_URI must use 'redis://' or 'rediss://' scheme")
+                if not parsed.netloc:
+                    errors.append("FLASK_LIMITER_STORAGE_URI must have a valid host")
+                if ("localhost" in parsed.netloc or "127.0.0.1" in parsed.netloc) and is_production:
+                    errors.append("FLASK_LIMITER_STORAGE_URI cannot point to localhost in production")
+            except Exception:
+                errors.append("FLASK_LIMITER_STORAGE_URI must be a valid URL")
         
         # 5. Boolean parsing validation
         # Check that boolean environment variables have valid values

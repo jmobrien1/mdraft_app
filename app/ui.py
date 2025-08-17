@@ -18,7 +18,15 @@ bp = Blueprint("ui", __name__)
 @bp.route("/")
 def index() -> Any:
     """Render the main application page."""
-    return render_template("index.html")
+    try:
+        current_app.logger.info("Rendering index page")
+        return render_template("index.html")
+    except Exception as e:
+        current_app.logger.error(f"Error rendering index page: {e}")
+        current_app.logger.error(f"Error type: {type(e).__name__}")
+        current_app.logger.error(f"Error details: {str(e)}")
+        # Return a simple error page instead of letting the exception bubble up
+        return render_template("errors/500.html"), 500
 
 
 @bp.route("/compliance-matrix/<int:proposal_id>")
