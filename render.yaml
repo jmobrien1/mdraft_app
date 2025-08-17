@@ -9,7 +9,7 @@ services:
     preDeployCommand: |
       python scripts/startup_validation.py
       bash scripts/migration_sentry.sh  # Runs flask db upgrade before serving
-    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 2 --threads 8 --timeout 120 wsgi:app
+    startCommand: gunicorn --workers 2 --threads 8 --timeout 120 wsgi:app
     healthCheckPath: /health/simple
     envVars:
       - key: FLASK_ENV
