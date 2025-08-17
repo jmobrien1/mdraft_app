@@ -13,10 +13,11 @@ services:
       
       # Skip startup validation during pre-deployment (env vars not available yet)
       echo "Skipping startup validation during pre-deployment (environment variables not available)"
-      
-      # Run database migrations with fallback configuration
+    startCommand: bash scripts/start.sh
+    postDeployCommand: |
+      # Run database migrations after app is already bound to port
+      echo "Running database migrations post-deployment..."
       bash scripts/migration_sentry.sh
-    startCommand: gunicorn --workers 2 --threads 8 --timeout 120 wsgi:app
     healthCheckPath: /health/simple
     envVars:
       - key: FLASK_ENV
