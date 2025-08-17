@@ -2,51 +2,16 @@ services:
   - type: web
     name: mdraft-web
     env: python
-    buildCommand: |
-      pip install --no-cache-dir --upgrade pip
-      pip install --no-cache-dir -r requirements-minimal.txt
+    buildCommand: pip install -r requirements.txt
     runtime: python-3.11.11
-    preDeployCommand: |
-      # Set fallback session backend for pre-deployment
-      export SESSION_BACKEND="${SESSION_BACKEND:-filesystem}"
-      export SESSION_TYPE="${SESSION_TYPE:-filesystem}"
-      
-      # Skip startup validation during pre-deployment (env vars not available yet)
-      echo "Skipping startup validation during pre-deployment (environment variables not available)"
-    startCommand: bash scripts/start.sh
-    postDeployCommand: |
-      # Run database migrations after app is already bound to port
-      echo "Running database migrations post-deployment..."
-      bash scripts/migration_sentry.sh
-    healthCheckPath: /health/simple
+    preDeployCommand: bash scripts/predeploy.sh
+    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 2 --threads 8 --timeout 120 --preload wsgi:app
+    healthCheckPath: /health
     envVars:
       - key: FLASK_ENV
         value: production
-      - key: FLASK_APP
-        value: wsgi.py
-      - key: PYTHONPATH
-        value: /opt/render/project/src
-      - key: DATABASE_URL
-        sync: false
       - key: SECRET_KEY
-        sync: false
-        # Note: Set this in Render Dashboard → Environment → Secret files/variables
-      - key: MDRAFT_PUBLIC_MODE
-        value: "0"
-      - key: LOGIN_DISABLED
-        value: "false"
-      - key: SESSION_BACKEND
-        value: "redis"
-      - key: SESSION_COOKIE_SECURE
-        value: "true"
-      - key: SESSION_COOKIE_SAMESITE
-        value: "Lax"
-      - key: REMEMBER_COOKIE_SECURE
-        value: "true"
-      - key: REMEMBER_COOKIE_SAMESITE
-        value: "Lax"
-      - key: ALLOWLIST
-        value: "admin@example.com"
+        generateValue: true
       - key: FLASK_LIMITER_STORAGE_URI
         sync: false
       - key: GLOBAL_RATE_LIMIT
@@ -55,62 +20,55 @@ services:
         sync: false
       - key: CELERY_RESULT_BACKEND
         sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: SESSION_REDIS_URL
+        sync: false
       - key: GOOGLE_APPLICATION_CREDENTIALS
         value: /etc/secrets/gcp.json
       - key: GCS_BUCKET_NAME
         sync: false
-      - key: GCS_PROCESSED_BUCKET_NAME
-        sync: false
-      - key: GOOGLE_CLOUD_PROJECT
-        sync: false
       - key: QUEUE_MODE
-        value: sync   # change to 'async' to enable queueing
+        value: celery
       - key: USE_GCS
-        value: "0"
+        value: "1"
       - key: SENTRY_DSN
         sync: false
       - key: SENTRY_ENVIRONMENT
         value: production
       - key: WEBHOOK_SECRET
         sync: false
-      - key: OPENAI_API_KEY
+      - key: DATABASE_URL
         sync: false
-      - key: STRIPE_SECRET_KEY
-        sync: false
-      - key: STRIPE_WEBHOOK_SECRET
-        sync: false
-      - key: ADMIN_TOKEN
-        sync: false
+      - key: SESSION_TYPE
+        value: redis
+      - key: SESSION_USE_SIGNER
+        value: "true"
+      - key: SESSION_KEY_PREFIX
+        value: mdraft:sess:
+      - key: SESSION_COOKIE_SECURE
+        value: "true"
+      - key: SESSION_COOKIE_SAMESITE
+        value: Lax
 
   - type: worker
     name: mdraft_app-worker
     env: python
-    buildCommand: |
-      pip install --no-cache-dir --upgrade pip
-      pip install --no-cache-dir -r requirements-minimal.txt
+    buildCommand: pip install -r requirements.txt
     runtime: python-3.11.11
-    # No preDeployCommand for worker - migrations should only run on web service
-    startCommand: celery -A celery_worker.celery worker --loglevel=info --pool=threads --concurrency=4 --without-gossip --without-mingle
+    startCommand: celery -A celery_worker.celery worker --loglevel=info --pool=threads --concurrency=2 --without-gossip --without-mingle --without-heartbeat
     envVars:
-      - key: FLASK_APP
-        value: wsgi.py
-      - key: PYTHONPATH
-        value: /opt/render/project/src
-      - key: WORKER_SERVICE
-        value: "true"
-      - key: DATABASE_URL
-        sync: false
       - key: CELERY_BROKER_URL
         sync: false
       - key: CELERY_RESULT_BACKEND
         sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: DATABASE_URL
+        sync: false
       - key: GOOGLE_APPLICATION_CREDENTIALS
         value: /etc/secrets/gcp.json
       - key: GCS_BUCKET_NAME
-        sync: false
-      - key: GCS_PROCESSED_BUCKET_NAME
-        sync: false
-      - key: GOOGLE_CLOUD_PROJECT
         sync: false
       - key: SENTRY_DSN
         sync: false
@@ -118,40 +76,28 @@ services:
         value: production
       - key: WEBHOOK_SECRET
         sync: false
-      - key: OPENAI_API_KEY
-        sync: false
-      - key: STRIPE_SECRET_KEY
-        sync: false
-      - key: STRIPE_WEBHOOK_SECRET
-        sync: false
-      - key: ADMIN_TOKEN
-        sync: false
-      - key: MDRAFT_PUBLIC_MODE
-        value: "0"
+      - key: USE_GCS
+        value: "1"
+      - key: QUEUE_MODE
+        value: celery
 
   - type: cron
     name: mdraft-cleanup
     env: python
-    schedule: "0 6 * * *"           # daily at 06:00 UTC
-    buildCommand: |
-      pip install --no-cache-dir --upgrade pip
-      pip install --no-cache-dir -r requirements-minimal.txt
+    schedule: "0 6 * * *"
+    buildCommand: pip install -r requirements.txt
     runtime: python-3.11.11
     startCommand: flask --app app:create_app cleanup
     envVars:
-      - key: PYTHONPATH
-        value: /opt/render/project/src
       - key: DATABASE_URL
         sync: false
       - key: GOOGLE_APPLICATION_CREDENTIALS
         value: /etc/secrets/gcp.json
       - key: GCS_BUCKET_NAME
-        sync: false
-      - key: GCS_PROCESSED_BUCKET_NAME
-        sync: false
-      - key: GOOGLE_CLOUD_PROJECT
         sync: false
       - key: CLEANUP_DELETE_GCS
         value: "1"
       - key: RETENTION_DAYS
         value: "30"
+      - key: USE_GCS
+        value: "1"

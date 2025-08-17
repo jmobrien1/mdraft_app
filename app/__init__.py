@@ -406,90 +406,83 @@ def create_app() -> Flask:
         app.logger.error(f"Extension initialization error details: {str(e)}")
         raise
     
-    # --- Session Configuration ---
-    # Single code path for session configuration with hardened security
-    redis_client = None  # Will hold the Redis client for session storage
+    # --- Redis and Session Configuration - FIXED VERSION ---
+    redis_url = ENV.get("REDIS_URL") or ENV.get("SESSION_REDIS_URL")
+    session_redis_url = ENV.get("SESSION_REDIS_URL") or redis_url
+    limiter_redis_url = ENV.get("FLASK_LIMITER_STORAGE_URI") or redis_url
     
-    if config.SESSION_BACKEND == "redis":
+    # Configure Redis client properly for rediss:// URLs
+    if redis_url:
         try:
-            app.logger.info("Configuring Redis session backend...")
+            import redis
+            from urllib.parse import urlparse
             
-            # Clean Redis URLs to remove any trailing whitespace
-            if config.SESSION_REDIS_URL:
-                clean_redis_url = config.SESSION_REDIS_URL.strip()
-                app.config["SESSION_REDIS_URL"] = clean_redis_url
-                app.logger.info(f"Using SESSION_REDIS_URL for session storage: {clean_redis_url[:20]}...")
-            elif config.REDIS_URL:
-                clean_redis_url = config.REDIS_URL.strip()
-                app.config["SESSION_REDIS_URL"] = clean_redis_url
-                app.logger.info(f"Using REDIS_URL for session storage: {clean_redis_url[:20]}...")
-            else:
-                app.logger.warning("No Redis URL configured, falling back to filesystem sessions")
-                app.config["SESSION_TYPE"] = "filesystem"
-                app.logger.info("Using filesystem session backend (fallback)")
-                
-            # Test Redis connection and create client for session storage
-            if app.config.get("SESSION_REDIS_URL"):
-                import redis
-                import ssl
-                
-                # Configure Redis client with SSL support for Render
-                redis_url = app.config["SESSION_REDIS_URL"]
-                app.logger.info(f"Creating Redis client for URL: {redis_url[:20]}...")
-                
-                # Check if URL uses SSL (rediss://)
-                use_ssl = redis_url.startswith('rediss://')
-                app.logger.info(f"Redis SSL enabled: {use_ssl}")
-                
+            # Parse the Redis URL to check if it's using TLS
+            parsed_url = urlparse(redis_url)
+            is_tls = parsed_url.scheme == 'rediss'
+            
+            if is_tls:
+                # For rediss:// URLs, let the URL handle TLS configuration
+                # Don't pass additional ssl parameters that might conflict
                 redis_client = redis.from_url(
-                    redis_url,
+                    session_redis_url,
                     decode_responses=False,  # Flask-Session handles encoding/decoding
-                    socket_connect_timeout=5,
-                    socket_timeout=5,
-                    retry_on_timeout=True,
+                    socket_keepalive=True,
+                    socket_keepalive_options={},
                     health_check_interval=30,
-                    ssl=use_ssl,
-                    ssl_cert_reqs=None if use_ssl else None,  # Don't verify SSL cert for Render
-                    ssl_ca_certs=None if use_ssl else None    # Don't verify SSL cert for Render
+                    retry_on_error=[redis.BusyLoadingError, redis.ConnectionError, redis.TimeoutError]
                 )
-                redis_client.ping()
-                app.logger.info("Redis session connection successful")
-                # Set SESSION_TYPE to redis only after successful connection
-                app.config["SESSION_TYPE"] = "redis"
-                
-        except Exception as e:
-            if os.getenv("FLASK_ENV") == "production":
-                app.logger.error(f"Failed to initialize Redis session backend: {e}")
-                app.logger.error(f"Redis error type: {type(e).__name__}")
-                app.logger.error(f"Redis error details: {str(e)}")
-                # In production, fall back to filesystem sessions instead of crashing
-                app.logger.warning("Falling back to filesystem sessions due to Redis failure")
-                app.config["SESSION_TYPE"] = "filesystem"
-                app.logger.info("Using filesystem session backend (fallback)")
-                redis_client = None  # Ensure redis_client is None on failure
             else:
-                app.logger.warning(f"Redis session backend failed, falling back to filesystem: {e}")
-                app.config["SESSION_TYPE"] = "filesystem"
-                app.logger.info("Using filesystem session backend (fallback)")
-                redis_client = None  # Ensure redis_client is None on failure
-    elif config.SESSION_BACKEND == "null":
-        # Disable sessions entirely (for testing or minimal deployments)
-        # Use filesystem with minimal settings instead of "null"
-        app.config["SESSION_TYPE"] = "filesystem"
-        app.config["SESSION_FILE_DIR"] = "/tmp/flask_session"
-        app.config["SESSION_FILE_THRESHOLD"] = 0  # Don't create files
-        app.logger.info("Sessions disabled (using minimal filesystem backend)")
-        redis_client = None  # Ensure redis_client is None
+                # For redis:// URLs, standard configuration
+                redis_client = redis.from_url(
+                    session_redis_url,
+                    decode_responses=False,  # Flask-Session handles encoding/decoding
+                    socket_keepalive=True,
+                    socket_keepalive_options={},
+                    health_check_interval=30
+                )
+                
+            # Test the connection
+            redis_client.ping()
+            app.logger.info(f"Redis connection successful: {parsed_url.scheme}://{parsed_url.hostname}:{parsed_url.port}")
+            
+        except Exception as e:
+            app.logger.warning(f"Redis connection failed: {e}. Falling back to filesystem sessions.")
+            redis_client = None
     else:
-        # Filesystem session configuration (default for development)
-        app.config["SESSION_TYPE"] = "filesystem"
-        app.logger.info("Using filesystem session backend")
-        redis_client = None  # Ensure redis_client is None
+        redis_client = None
+        app.logger.info("No Redis URL provided, using filesystem sessions")
+
+    # Session Configuration
+    app.config.update(
+        SESSION_TYPE='redis' if redis_client else 'filesystem',
+        SESSION_REDIS=redis_client,
+        SESSION_USE_SIGNER=True,
+        SESSION_KEY_PREFIX='mdraft:sess:',
+        SESSION_PERMANENT=False,
+        SESSION_COOKIE_SECURE=True,
+        SESSION_COOKIE_HTTPONLY=True,
+        SESSION_COOKIE_SAMESITE='Lax'
+    )
+
+    # Initialize Flask-Session
+    from flask_session import Session
+    Session(app)
+
+    # Flask-Limiter configuration with proper Redis handling
+    limiter_storage_uri = limiter_redis_url if limiter_redis_url else "memory://"
     
-    # Hardened session cookie configuration
-    app.config["SESSION_COOKIE_SECURE"] = config.SESSION_COOKIE_SECURE
-    app.config["SESSION_COOKIE_HTTPONLY"] = config.SESSION_COOKIE_HTTPONLY
-    app.config["SESSION_COOKIE_SAMESITE"] = config.SESSION_COOKIE_SAMESITE
+    # Update the existing limiter configuration
+    limiter.init_app(app)
+    if limiter_redis_url:
+        try:
+            # Test limiter Redis connection
+            import redis
+            test_client = redis.from_url(limiter_redis_url, decode_responses=True)
+            test_client.ping()
+            app.logger.info("Rate limiter Redis connection successful")
+        except Exception as e:
+            app.logger.warning(f"Rate limiter Redis connection failed: {e}. Using memory storage.")
     
     # Session lifetime configuration (in seconds)
     session_lifetime_seconds = 60 * 60 * 24 * config.security.SESSION_LIFETIME_DAYS
@@ -498,60 +491,6 @@ def create_app() -> Flask:
     
     app.logger.info(f"Session lifetime: {config.security.SESSION_LIFETIME_DAYS} days ({session_lifetime_seconds} seconds)")
     app.logger.info(f"Session cookies: Secure={config.SESSION_COOKIE_SECURE}, HttpOnly={config.SESSION_COOKIE_HTTPONLY}, SameSite={config.SESSION_COOKIE_SAMESITE}")
-    
-    # Initialize session extension after configuration is set
-    global session
-    session = Session()
-    
-    # If we have a Redis client, initialize Flask-Session with it directly
-    app.logger.info(f"Session configuration - SESSION_TYPE: {app.config.get('SESSION_TYPE')}, redis_client: {redis_client is not None}")
-    
-    if redis_client and app.config.get("SESSION_TYPE") == "redis":
-        app.logger.info("Initializing Flask-Session with Redis client")
-        session.init_app(app, redis_client)
-    else:
-        app.logger.info("Initializing Flask-Session with default configuration")
-        session.init_app(app)
-    
-    # Test Redis connectivity for all Redis URLs during startup
-    try:
-        import redis
-        redis_urls_to_test = []
-        
-        if config.SESSION_REDIS_URL:
-            redis_urls_to_test.append(("SESSION_REDIS_URL", config.SESSION_REDIS_URL))
-        if config.REDIS_URL:
-            redis_urls_to_test.append(("REDIS_URL", config.REDIS_URL))
-        if config.FLASK_LIMITER_STORAGE_URI:
-            redis_urls_to_test.append(("FLASK_LIMITER_STORAGE_URI", config.FLASK_LIMITER_STORAGE_URI))
-        
-        for name, url in redis_urls_to_test:
-            try:
-                clean_url = url.strip()
-                # Check if URL uses SSL (rediss://)
-                use_ssl = clean_url.startswith('rediss://')
-                app.logger.info(f"Testing Redis connection for {name} (SSL: {use_ssl})")
-                
-                client = redis.from_url(
-                    clean_url, 
-                    decode_responses=True, 
-                    socket_connect_timeout=5, 
-                    socket_timeout=5,
-                    ssl=use_ssl,
-                    ssl_cert_reqs=None if use_ssl else None,  # Don't verify SSL cert for Render
-                    ssl_ca_certs=None if use_ssl else None    # Don't verify SSL cert for Render
-                )
-                client.ping()
-                app.logger.info(f"Redis connection test successful for {name}")
-            except Exception as e:
-                app.logger.error(f"Redis connection test failed for {name}: {e}")
-                if os.getenv("FLASK_ENV") == "production":
-                    app.logger.error(f"Redis connection failure for {name} in production - this may cause issues")
-                
-    except ImportError:
-        app.logger.warning("redis package not available - skipping Redis connection tests")
-    except Exception as e:
-        app.logger.error(f"Unexpected error during Redis connection testing: {e}")
     
     # CSRF Configuration
     app.config.setdefault("WTF_CSRF_ENABLED", True)
