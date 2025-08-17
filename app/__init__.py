@@ -252,12 +252,31 @@ def create_app() -> Flask:
     if config.SESSION_BACKEND == "redis":
         # Redis session configuration for production
         app.config["SESSION_TYPE"] = "redis"
-        app.config["SESSION_REDIS"] = config.SESSION_REDIS_URL_FINAL
-        app.logger.info(f"Using Redis session backend: {config.SESSION_REDIS_URL_FINAL}")
-        if config.SESSION_REDIS_URL:
-            app.logger.info(f"Using SESSION_REDIS_URL for session storage")
-        else:
-            app.logger.info(f"Using REDIS_URL for session storage (SESSION_REDIS_URL not set)")
+        
+        # Create Redis client for session storage
+        try:
+            redis_client = config.create_session_redis_client()
+            app.config["SESSION_REDIS"] = redis_client
+            
+            # Log which Redis URL is being used
+            if config.SESSION_REDIS_URL:
+                app.logger.info(f"Using SESSION_REDIS_URL for session storage: {config.SESSION_REDIS_URL}")
+            else:
+                app.logger.info(f"Using REDIS_URL for session storage: {config.REDIS_URL}")
+                
+            # Test Redis connection
+            redis_client.ping()
+            app.logger.info("Redis session connection successful")
+            
+        except Exception as e:
+            if os.getenv("FLASK_ENV") == "production":
+                app.logger.error(f"Failed to initialize Redis session backend: {e}")
+                raise RuntimeError(f"Redis session backend initialization failed: {e}")
+            else:
+                app.logger.warning(f"Redis session backend failed, falling back to filesystem: {e}")
+                app.config["SESSION_TYPE"] = "filesystem"
+                app.logger.info("Using filesystem session backend (fallback)")
+                
     elif config.SESSION_BACKEND == "null":
         # Disable sessions entirely (for testing or minimal deployments)
         app.config["SESSION_TYPE"] = "null"

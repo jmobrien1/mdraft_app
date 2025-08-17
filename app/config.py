@@ -292,9 +292,10 @@ class AppConfig:
         
         # Redis URL configuration - SESSION_REDIS_URL takes precedence for sessions
         self.SESSION_REDIS_URL = os.getenv("SESSION_REDIS_URL")
-        self.REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+        self.REDIS_URL = os.getenv("REDIS_URL")
         
         # Use SESSION_REDIS_URL for sessions if available, otherwise fall back to REDIS_URL
+        # In production, we require a valid Redis URL
         self.SESSION_REDIS_URL_FINAL = self.SESSION_REDIS_URL or self.REDIS_URL
         
         # Session cookie configuration
@@ -459,16 +460,24 @@ class AppConfig:
             except Exception:
                 errors.append("DATABASE_URL must be a valid URL")
         
-        # Redis URL
+        # Redis URL validation
         if self.SESSION_BACKEND == "redis":
-            try:
-                parsed = urlparse(self.SESSION_REDIS_URL_FINAL)
-                if parsed.scheme != "redis":
-                    errors.append("SESSION_REDIS_URL_FINAL must use 'redis://' scheme")
-                if not parsed.netloc:
-                    errors.append("SESSION_REDIS_URL_FINAL must have a valid host")
-            except Exception:
-                errors.append("SESSION_REDIS_URL_FINAL must be a valid URL")
+            if not self.SESSION_REDIS_URL_FINAL:
+                if is_production:
+                    errors.append("Redis session backend requires SESSION_REDIS_URL or REDIS_URL in production")
+                else:
+                    errors.append("Redis session backend requires SESSION_REDIS_URL or REDIS_URL")
+            else:
+                try:
+                    parsed = urlparse(self.SESSION_REDIS_URL_FINAL)
+                    if parsed.scheme not in ["redis", "rediss"]:
+                        errors.append("SESSION_REDIS_URL_FINAL must use 'redis://' or 'rediss://' scheme")
+                    if not parsed.netloc:
+                        errors.append("SESSION_REDIS_URL_FINAL must have a valid host")
+                    if ("localhost" in parsed.netloc or "127.0.0.1" in parsed.netloc) and is_production:
+                        errors.append("SESSION_REDIS_URL_FINAL cannot point to localhost in production")
+                except Exception:
+                    errors.append("SESSION_REDIS_URL_FINAL must be a valid URL")
         
         # GCS bucket names (simple validation)
         if self.GCS_BUCKET_NAME:
@@ -704,6 +713,33 @@ class AppConfig:
             "MDRAFT_DEV_STUB": self.MDRAFT_DEV_STUB,
         }
     
+    def create_session_redis_client(self):
+        """Create a Redis client for session storage.
+        
+        Returns:
+            redis.Redis: Redis client instance
+            
+        Raises:
+            ConfigurationError: If no valid Redis URL is available
+        """
+        if not self.SESSION_REDIS_URL_FINAL:
+            raise ConfigurationError("No Redis URL available for session storage")
+        
+        try:
+            import redis
+            return redis.from_url(
+                self.SESSION_REDIS_URL_FINAL,
+                decode_responses=True,
+                socket_connect_timeout=5,
+                socket_timeout=5,
+                retry_on_timeout=True,
+                health_check_interval=30
+            )
+        except ImportError:
+            raise ConfigurationError("redis package is required for Redis session backend")
+        except Exception as e:
+            raise ConfigurationError(f"Failed to create Redis client: {e}")
+
     def apply_secrets_to_app(self, app) -> None:
         """Securely apply secrets to Flask app configuration without logging them."""
         # Apply secrets directly to app config to avoid exposure in logs
