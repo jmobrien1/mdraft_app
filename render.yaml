@@ -7,8 +7,15 @@ services:
       pip install --no-cache-dir -r requirements-minimal.txt
     runtime: python-3.11.11
     preDeployCommand: |
+      # Set fallback session backend for pre-deployment
+      export SESSION_BACKEND="${SESSION_BACKEND:-filesystem}"
+      export SESSION_TYPE="${SESSION_TYPE:-filesystem}"
+      
+      # Run startup validation
       python scripts/startup_validation.py
-      bash scripts/migration_sentry.sh  # Runs flask db upgrade before serving
+      
+      # Run database migrations
+      bash scripts/migration_sentry.sh
     startCommand: gunicorn --workers 2 --threads 8 --timeout 120 wsgi:app
     healthCheckPath: /health/simple
     envVars:
