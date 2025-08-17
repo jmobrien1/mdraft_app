@@ -410,46 +410,25 @@ def create_app() -> Flask:
     redis_url = ENV.get("REDIS_URL") or ENV.get("SESSION_REDIS_URL")
     session_redis_url = ENV.get("SESSION_REDIS_URL") or redis_url
     limiter_redis_url = ENV.get("FLASK_LIMITER_STORAGE_URI") or redis_url
-    
-    # Configure Redis client properly for rediss:// URLs
+
+    # Configure Redis client - NO SSL for Render internal KV
     redis_client = None
     if redis_url:
         try:
             import redis
-            from urllib.parse import urlparse
             
-            # Parse the Redis URL to check if it's using TLS
-            parsed_url = urlparse(redis_url)
-            is_tls = parsed_url.scheme == 'rediss'
+            # ✅ Simple connection - no SSL parameters
+            redis_client = redis.from_url(
+                session_redis_url,
+                decode_responses=False,
+                socket_keepalive=True,
+                health_check_interval=30,
+                retry_on_error=[redis.BusyLoadingError, redis.ConnectionError, redis.TimeoutError]
+            )
             
-            if is_tls:
-                # For rediss:// URLs, explicitly configure SSL settings
-                redis_client = redis.from_url(
-                    session_redis_url,
-                    decode_responses=False,  # Flask-Session handles encoding/decoding
-                    socket_keepalive=True,
-                    socket_keepalive_options={},
-                    health_check_interval=30,
-                    retry_on_error=[redis.BusyLoadingError, redis.ConnectionError, redis.TimeoutError],
-                    ssl_cert_reqs='none',  # Don't verify SSL certificates
-                    ssl_check_hostname=False,
-                    ssl_ca_certs=None,
-                    ssl_certfile=None,
-                    ssl_keyfile=None,
-                )
-            else:
-                # For redis:// URLs, standard configuration
-                redis_client = redis.from_url(
-                    session_redis_url,
-                    decode_responses=False,  # Flask-Session handles encoding/decoding
-                    socket_keepalive=True,
-                    socket_keepalive_options={},
-                    health_check_interval=30
-                )
-                
             # Test the connection
             redis_client.ping()
-            app.logger.info(f"Redis connection successful: {parsed_url.scheme}://{parsed_url.hostname}:{parsed_url.port}")
+            app.logger.info(f"Redis connection successful: {redis_url}")
             
         except Exception as e:
             app.logger.warning(f"Redis connection failed: {e}. Falling back to filesystem sessions.")
@@ -473,24 +452,12 @@ def create_app() -> Flask:
     from flask_session import Session
     Session(app)
 
-    # Flask-Limiter configuration with proper Redis handling
-    limiter_storage_uri = limiter_redis_url if limiter_redis_url else "memory://"
-    
-    # Update the existing limiter configuration
+    # Flask-Limiter configuration - NO SSL parameters
     limiter.init_app(app)
     if limiter_redis_url:
         try:
-            # Test limiter Redis connection with proper SSL configuration
             import redis
-            if limiter_redis_url.startswith('rediss://'):
-                test_client = redis.from_url(
-                    limiter_redis_url, 
-                    decode_responses=True,
-                    ssl_cert_reqs='none',
-                    ssl_check_hostname=False
-                )
-            else:
-                test_client = redis.from_url(limiter_redis_url, decode_responses=True)
+            test_client = redis.from_url(limiter_redis_url, decode_responses=True)
             test_client.ping()
             app.logger.info("Rate limiter Redis connection successful")
         except Exception as e:

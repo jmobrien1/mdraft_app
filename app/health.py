@@ -9,6 +9,7 @@ Celery worker status, and storage access.
 from __future__ import annotations
 
 import logging
+import os
 import time
 from typing import Dict, Any, Optional
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
@@ -309,3 +310,48 @@ def health_simple() -> tuple[Dict[str, Any], int]:
         Simple JSON response indicating service is running
     """
     return jsonify({"status": "ok", "service": "mdraft"}), 200
+
+
+@bp.get("/health/full")
+def health_full() -> tuple[Dict[str, Any], int]:
+    """Comprehensive health check with Redis and Celery."""
+    checks = {
+        "database": False,
+        "redis": False,
+        "celery": False
+    }
+    
+    # Database check
+    try:
+        db.session.execute(text("SELECT 1"))
+        checks["database"] = True
+    except Exception as e:
+        logger.error(f"Database check failed: {e}")
+    
+    # Redis check
+    try:
+        redis_url = os.environ.get("REDIS_URL")
+        if redis_url:
+            import redis
+            client = redis.from_url(redis_url)
+            client.ping()
+            checks["redis"] = True
+        else:
+            checks["redis"] = True  # No Redis configured
+    except Exception as e:
+        logger.error(f"Redis check failed: {e}")
+    
+    # Celery check (basic)
+    try:
+        from celery_worker import celery
+        # Simple check - just verify Celery app exists
+        if celery and celery.broker:
+            checks["celery"] = True
+    except Exception as e:
+        logger.error(f"Celery check failed: {e}")
+    
+    all_healthy = all(checks.values())
+    return jsonify({
+        "status": "healthy" if all_healthy else "unhealthy",
+        "checks": checks
+    }), 200 if all_healthy else 503
