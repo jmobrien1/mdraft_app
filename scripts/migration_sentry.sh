@@ -11,6 +11,15 @@ export FLASK_APP="${FLASK_APP:-wsgi.py}"
 : "${DATABASE_URL:?DATABASE_URL is not set}"
 export SQLALCHEMY_DATABASE_URI="${SQLALCHEMY_DATABASE_URI:-$DATABASE_URL}"
 
+# Set session configuration for pre-deployment script
+# This ensures Flask-Session doesn't fail during database migrations
+export SESSION_BACKEND="${SESSION_BACKEND:-filesystem}"
+export SESSION_TYPE="${SESSION_TYPE:-filesystem}"
+
+# Log session configuration for debugging
+echo "SESSION_BACKEND=$SESSION_BACKEND"
+echo "SESSION_TYPE=$SESSION_TYPE"
+
 echo "PYTHONPATH=$PYTHONPATH"
 echo "FLASK_APP=$FLASK_APP"
 masked_host="$(echo "${DATABASE_URL#*://}" | cut -d@ -f2 | cut -d/ -f1)"
