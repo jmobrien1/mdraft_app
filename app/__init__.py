@@ -436,6 +436,8 @@ def create_app() -> Flask:
                 )
                 redis_client.ping()
                 app.logger.info("Redis session connection successful")
+                # Set SESSION_TYPE to redis only after successful connection
+                app.config["SESSION_TYPE"] = "redis"
                 
         except Exception as e:
             if os.getenv("FLASK_ENV") == "production":
@@ -452,8 +454,11 @@ def create_app() -> Flask:
                 app.logger.info("Using filesystem session backend (fallback)")
     elif config.SESSION_BACKEND == "null":
         # Disable sessions entirely (for testing or minimal deployments)
-        app.config["SESSION_TYPE"] = "null"
-        app.logger.info("Sessions disabled (null backend)")
+        # Use filesystem with minimal settings instead of "null"
+        app.config["SESSION_TYPE"] = "filesystem"
+        app.config["SESSION_FILE_DIR"] = "/tmp/flask_session"
+        app.config["SESSION_FILE_THRESHOLD"] = 0  # Don't create files
+        app.logger.info("Sessions disabled (using minimal filesystem backend)")
     else:
         # Filesystem session configuration (default for development)
         app.config["SESSION_TYPE"] = "filesystem"
