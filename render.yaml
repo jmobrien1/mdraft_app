@@ -9,7 +9,7 @@ services:
       export SESSION_BACKEND="${SESSION_BACKEND:-filesystem}"
       export SESSION_TYPE="${SESSION_TYPE:-filesystem}"
       echo "Pre-deployment setup complete"
-    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 2 --threads 8 --timeout 120 --access-logfile - --error-logfile - wsgi:app
+    startCommand: python run.py
     postDeployCommand: |
       # Run database migrations after app is bound to port
       echo "Running post-deployment migrations..."
@@ -18,6 +18,8 @@ services:
     envVars:
       - key: FLASK_ENV
         value: production
+      - key: FLASK_DEBUG
+        value: "0"
       - key: SECRET_KEY
         sync: false
       - key: DATABASE_URL
