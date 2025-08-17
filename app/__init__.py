@@ -252,8 +252,12 @@ def create_app() -> Flask:
     if config.SESSION_BACKEND == "redis":
         # Redis session configuration for production
         app.config["SESSION_TYPE"] = "redis"
-        app.config["SESSION_REDIS"] = config.REDIS_URL
-        app.logger.info(f"Using Redis session backend: {config.REDIS_URL}")
+        app.config["SESSION_REDIS"] = config.SESSION_REDIS_URL_FINAL
+        app.logger.info(f"Using Redis session backend: {config.SESSION_REDIS_URL_FINAL}")
+        if config.SESSION_REDIS_URL:
+            app.logger.info(f"Using SESSION_REDIS_URL for session storage")
+        else:
+            app.logger.info(f"Using REDIS_URL for session storage (SESSION_REDIS_URL not set)")
     elif config.SESSION_BACKEND == "null":
         # Disable sessions entirely (for testing or minimal deployments)
         app.config["SESSION_TYPE"] = "null"

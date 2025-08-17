@@ -289,7 +289,13 @@ class AppConfig:
         # Default to Redis in production, filesystem in development
         default_session_backend = "redis" if os.getenv("FLASK_ENV") == "production" else "filesystem"
         self.SESSION_BACKEND = os.getenv("SESSION_BACKEND", default_session_backend).lower()
+        
+        # Redis URL configuration - SESSION_REDIS_URL takes precedence for sessions
+        self.SESSION_REDIS_URL = os.getenv("SESSION_REDIS_URL")
         self.REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+        
+        # Use SESSION_REDIS_URL for sessions if available, otherwise fall back to REDIS_URL
+        self.SESSION_REDIS_URL_FINAL = self.SESSION_REDIS_URL or self.REDIS_URL
         
         # Session cookie configuration
         self.SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "true").lower() == "true"
@@ -456,13 +462,13 @@ class AppConfig:
         # Redis URL
         if self.SESSION_BACKEND == "redis":
             try:
-                parsed = urlparse(self.REDIS_URL)
+                parsed = urlparse(self.SESSION_REDIS_URL_FINAL)
                 if parsed.scheme != "redis":
-                    errors.append("REDIS_URL must use 'redis://' scheme")
+                    errors.append("SESSION_REDIS_URL_FINAL must use 'redis://' scheme")
                 if not parsed.netloc:
-                    errors.append("REDIS_URL must have a valid host")
+                    errors.append("SESSION_REDIS_URL_FINAL must have a valid host")
             except Exception:
-                errors.append("REDIS_URL must be a valid URL")
+                errors.append("SESSION_REDIS_URL_FINAL must be a valid URL")
         
         # GCS bucket names (simple validation)
         if self.GCS_BUCKET_NAME:
@@ -678,7 +684,9 @@ class AppConfig:
             
             # Session
             "SESSION_BACKEND": self.SESSION_BACKEND,
+            "SESSION_REDIS_URL": self.SESSION_REDIS_URL,
             "REDIS_URL": self.REDIS_URL,
+            "SESSION_REDIS_URL_FINAL": self.SESSION_REDIS_URL_FINAL,
             "SESSION_COOKIE_SECURE": self.SESSION_COOKIE_SECURE,
             "SESSION_COOKIE_HTTPONLY": self.SESSION_COOKIE_HTTPONLY,
             "SESSION_COOKIE_SAMESITE": self.SESSION_COOKIE_SAMESITE,
