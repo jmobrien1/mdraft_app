@@ -51,7 +51,7 @@ SESSION_TYPE=filesystem
 ### For Production Runtime (Redis sessions)
 ```bash
 SESSION_BACKEND=redis
-REDIS_URL=redis://red-d2gudc7diees73duftog:6379
+REDIS_URL=rediss://red-d2gudc7diees73duftog:6379
 ```
 
 ## Implementation
@@ -98,5 +98,5 @@ SESSION_BACKEND=redis REDIS_URL=redis://red-d2gudc7diees73duftog:6379 bash scrip
 
 ### Production Runtime
 - Uses Redis sessions for user sessions
-- Proper connection to `redis://red-d2gudc7diees73duftog:6379`
+- Proper connection to `rediss://red-d2gudc7diees73duftog:6379`
 - Full session functionality with Redis backend

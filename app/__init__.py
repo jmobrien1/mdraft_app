@@ -431,13 +431,26 @@ def create_app() -> Flask:
             # Test Redis connection and create client for session storage
             if app.config.get("SESSION_REDIS_URL"):
                 import redis
+                import ssl
+                
+                # Configure Redis client with SSL support for Render
+                redis_url = app.config["SESSION_REDIS_URL"]
+                app.logger.info(f"Creating Redis client for URL: {redis_url[:20]}...")
+                
+                # Check if URL uses SSL (rediss://)
+                use_ssl = redis_url.startswith('rediss://')
+                app.logger.info(f"Redis SSL enabled: {use_ssl}")
+                
                 redis_client = redis.from_url(
-                    app.config["SESSION_REDIS_URL"], 
+                    redis_url,
                     decode_responses=True,
                     socket_connect_timeout=5,
                     socket_timeout=5,
                     retry_on_timeout=True,
-                    health_check_interval=30
+                    health_check_interval=30,
+                    ssl=use_ssl,
+                    ssl_cert_reqs=None if use_ssl else None,  # Don't verify SSL cert for Render
+                    ssl_ca_certs=None if use_ssl else None    # Don't verify SSL cert for Render
                 )
                 redis_client.ping()
                 app.logger.info("Redis session connection successful")
@@ -516,7 +529,19 @@ def create_app() -> Flask:
         for name, url in redis_urls_to_test:
             try:
                 clean_url = url.strip()
-                client = redis.from_url(clean_url, decode_responses=True, socket_connect_timeout=5, socket_timeout=5)
+                # Check if URL uses SSL (rediss://)
+                use_ssl = clean_url.startswith('rediss://')
+                app.logger.info(f"Testing Redis connection for {name} (SSL: {use_ssl})")
+                
+                client = redis.from_url(
+                    clean_url, 
+                    decode_responses=True, 
+                    socket_connect_timeout=5, 
+                    socket_timeout=5,
+                    ssl=use_ssl,
+                    ssl_cert_reqs=None if use_ssl else None,  # Don't verify SSL cert for Render
+                    ssl_ca_certs=None if use_ssl else None    # Don't verify SSL cert for Render
+                )
                 client.ping()
                 app.logger.info(f"Redis connection test successful for {name}")
             except Exception as e:
