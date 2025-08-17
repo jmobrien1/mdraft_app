@@ -53,6 +53,9 @@ limiter = Limiter(
     default_limits=["120 per minute"],
 )
 
+# Global flag to track if limiter is properly initialized
+_limiter_initialized = False
+
 # Register models with SQLAlchemy metadata so Alembic can see them
 from .models_conversion import Conversion  # noqa: F401
 from .models_apikey import ApiKey  # noqa: F401
@@ -61,7 +64,7 @@ from .models_apikey import ApiKey  # noqa: F401
 def conditional_limit(limit_string: str):
     """Apply rate limit only if limiter is enabled."""
     try:
-        if limiter and limiter.default_limits:  # Check if limiter has limits (not disabled)
+        if _limiter_initialized and limiter and limiter.default_limits:
             return limiter.limit(limit_string)
     except Exception:
         # If limiter.limit() fails, fall back to no-op
@@ -228,37 +231,45 @@ def create_app() -> Flask:
     # Flask-Limiter configuration
     app.config.setdefault("RATELIMIT_HEADERS_ENABLED", True)
 
-    # Configure limiter with environment settings
+    # Configure limiter with environment settings - BULLETPROOF APPROACH
+    # Always configure the limiter first, then handle any errors
+    storage_uri = ENV.get("FLASK_LIMITER_STORAGE_URI", "memory://")
+    default_limits = [ENV.get("GLOBAL_RATE_LIMIT", "120 per minute")]
+    
+    # Configure the global limiter instance
+    limiter.storage_uri = storage_uri
+    limiter.default_limits = default_limits
+    
+    # Try to initialize with the app
     try:
-        # Configure the global limiter instance
-        limiter.storage_uri = ENV.get("FLASK_LIMITER_STORAGE_URI", "memory://")
-        limiter.default_limits = [ENV.get("GLOBAL_RATE_LIMIT", "120 per minute")]
         limiter.init_app(app)
+        _limiter_initialized = True
         app.logger.info("Flask-Limiter initialized successfully")
     except Exception as e:
         app.logger.error(f"Flask-Limiter initialization failed: {e}")
         app.logger.error(f"Limiter error type: {type(e).__name__}")
         app.logger.error(f"Limiter error details: {str(e)}")
+        
         # In production, we should fail fast for rate limiting issues
         if os.getenv("FLASK_ENV") == "production":
             raise RuntimeError(f"Flask-Limiter initialization failed: {e}")
         else:
             app.logger.warning("Flask-Limiter disabled due to initialization failure")
-            # Don't reassign limiter - just disable it by setting storage to memory
-            limiter.storage_uri = "memory://"
-            limiter.default_limits = []  # No limits when disabled
+            # Disable by clearing limits - limiter object still exists
+            limiter.default_limits = []
+            _limiter_initialized = False
 
     # Exempt health checks (keep Render happy)
     try:
         from .health import bp as _health_bp
-        if limiter and limiter.default_limits:  # Check if limiter has limits (not disabled)
+        if _limiter_initialized and limiter and limiter.default_limits:
             limiter.exempt(_health_bp)
     except Exception:
         pass
 
     # Optional allowlist: comma-separated IPs in RATE_ALLOWLIST
     from flask import request, jsonify
-    if limiter and limiter.default_limits:  # Check if limiter has limits (not disabled)
+    if _limiter_initialized and limiter and limiter.default_limits:
         @limiter.request_filter
         def _allowlist():
             try:
