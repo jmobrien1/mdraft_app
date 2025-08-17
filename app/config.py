@@ -288,7 +288,8 @@ class AppConfig:
         # Session configuration
         # Default to Redis in production, filesystem in development
         default_session_backend = "redis" if os.getenv("FLASK_ENV") == "production" else "filesystem"
-        self.SESSION_BACKEND = os.getenv("SESSION_BACKEND", default_session_backend).lower()
+        session_backend_env = os.getenv("SESSION_BACKEND")
+        self.SESSION_BACKEND = (session_backend_env or default_session_backend).lower()
         
         # Redis URL configuration - SESSION_REDIS_URL takes precedence for sessions
         self.SESSION_REDIS_URL = os.getenv("SESSION_REDIS_URL")

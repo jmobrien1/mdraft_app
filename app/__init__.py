@@ -18,7 +18,7 @@ import logging
 import json
 import os
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from flask import Flask, has_request_context, request
 from flask_sqlalchemy import SQLAlchemy
@@ -44,7 +44,8 @@ migrate: Migrate = Migrate()
 bcrypt: Bcrypt = Bcrypt()
 login_manager: LoginManager = LoginManager()
 csrf: CSRFProtect = CSRFProtect()
-session: Session = Session()
+# Note: session will be initialized after configuration is set
+session: Optional[Session] = None
 
 # GLOBAL limiter (exported as app.limiter so routes can import it)
 # Initialize with safe defaults - will be configured during app creation
@@ -477,7 +478,9 @@ def create_app() -> Flask:
     app.logger.info(f"Session lifetime: {config.security.SESSION_LIFETIME_DAYS} days ({session_lifetime_seconds} seconds)")
     app.logger.info(f"Session cookies: Secure={config.SESSION_COOKIE_SECURE}, HttpOnly={config.SESSION_COOKIE_HTTPONLY}, SameSite={config.SESSION_COOKIE_SAMESITE}")
     
-    # Initialize session extension
+    # Initialize session extension after configuration is set
+    global session
+    session = Session()
     session.init_app(app)
     
     # Test Redis connectivity for all Redis URLs during startup
