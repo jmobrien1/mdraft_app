@@ -453,10 +453,12 @@ def create_app() -> Flask:
                 app.logger.warning("Falling back to filesystem sessions due to Redis failure")
                 app.config["SESSION_TYPE"] = "filesystem"
                 app.logger.info("Using filesystem session backend (fallback)")
+                redis_client = None  # Ensure redis_client is None on failure
             else:
                 app.logger.warning(f"Redis session backend failed, falling back to filesystem: {e}")
                 app.config["SESSION_TYPE"] = "filesystem"
                 app.logger.info("Using filesystem session backend (fallback)")
+                redis_client = None  # Ensure redis_client is None on failure
     elif config.SESSION_BACKEND == "null":
         # Disable sessions entirely (for testing or minimal deployments)
         # Use filesystem with minimal settings instead of "null"
@@ -464,10 +466,12 @@ def create_app() -> Flask:
         app.config["SESSION_FILE_DIR"] = "/tmp/flask_session"
         app.config["SESSION_FILE_THRESHOLD"] = 0  # Don't create files
         app.logger.info("Sessions disabled (using minimal filesystem backend)")
+        redis_client = None  # Ensure redis_client is None
     else:
         # Filesystem session configuration (default for development)
         app.config["SESSION_TYPE"] = "filesystem"
         app.logger.info("Using filesystem session backend")
+        redis_client = None  # Ensure redis_client is None
     
     # Hardened session cookie configuration
     app.config["SESSION_COOKIE_SECURE"] = config.SESSION_COOKIE_SECURE
@@ -487,6 +491,8 @@ def create_app() -> Flask:
     session = Session()
     
     # If we have a Redis client, set it in the app configuration for Flask-Session
+    app.logger.info(f"Session configuration - SESSION_TYPE: {app.config.get('SESSION_TYPE')}, redis_client: {redis_client is not None}")
+    
     if redis_client and app.config.get("SESSION_TYPE") == "redis":
         app.logger.info("Setting Redis client in app configuration for Flask-Session")
         app.config["SESSION_REDIS"] = redis_client
