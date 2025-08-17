@@ -60,9 +60,16 @@ from .models_apikey import ApiKey  # noqa: F401
 # Helper function for conditional rate limiting
 def conditional_limit(limit_string: str):
     """Apply rate limit only if limiter is enabled."""
-    if limiter and hasattr(limiter, 'enabled') and limiter.enabled:
-        return limiter.limit(limit_string)
+    try:
+        if limiter and limiter.default_limits:  # Check if limiter has limits (not disabled)
+            return limiter.limit(limit_string)
+    except Exception:
+        # If limiter.limit() fails, fall back to no-op
+        pass
     return lambda f: f  # No-op decorator
+
+# Export conditional_limit for use in other modules
+__all__ = ['limiter', 'conditional_limit', 'db', 'migrate', 'bcrypt', 'login_manager', 'csrf', 'session']
 
 
 # Legacy JSONFormatter kept for backward compatibility
@@ -237,24 +244,31 @@ def create_app() -> Flask:
             raise RuntimeError(f"Flask-Limiter initialization failed: {e}")
         else:
             app.logger.warning("Flask-Limiter disabled due to initialization failure")
-            # Don't reassign limiter - just disable it
-            limiter.enabled = False
+            # Don't reassign limiter - just disable it by setting storage to memory
+            limiter.storage_uri = "memory://"
+            limiter.default_limits = []  # No limits when disabled
 
     # Exempt health checks (keep Render happy)
     try:
         from .health import bp as _health_bp
-        if limiter and hasattr(limiter, 'enabled') and limiter.enabled:
+        if limiter and limiter.default_limits:  # Check if limiter has limits (not disabled)
             limiter.exempt(_health_bp)
     except Exception:
         pass
 
     # Optional allowlist: comma-separated IPs in RATE_ALLOWLIST
     from flask import request, jsonify
-    if limiter and hasattr(limiter, 'enabled') and limiter.enabled:
+    if limiter and limiter.default_limits:  # Check if limiter has limits (not disabled)
         @limiter.request_filter
         def _allowlist():
-            ips = {ip.strip() for ip in config.RATE_ALLOWLIST.split(",") if ip.strip()}
-            return request.remote_addr in ips
+            try:
+                allowlist_str = getattr(config, 'RATE_ALLOWLIST', '')
+                if not allowlist_str:
+                    return False
+                ips = {ip.strip() for ip in allowlist_str.split(",") if ip.strip()}
+                return request.remote_addr in ips
+            except Exception:
+                return False
 
     # Request ID middleware is now handled by structured logging
 

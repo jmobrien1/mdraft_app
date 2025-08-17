@@ -72,8 +72,9 @@ try:
     limiter.default_limits = [ENV.get("GLOBAL_RATE_LIMIT", "120 per minute")]
     limiter.init_app(app)
 except Exception:
-    # Don't reassign limiter - just disable it
-    limiter.enabled = False  # ✅ No scope conflict
+    # Don't reassign limiter - just disable it by setting storage to memory
+    limiter.storage_uri = "memory://"
+    limiter.default_limits = []  # No limits when disabled
 ```
 
 ### **3. Added Helper Function for Conditional Rate Limiting**
@@ -81,7 +82,7 @@ except Exception:
 ```python
 def conditional_limit(limit_string: str):
     """Apply rate limit only if limiter is enabled."""
-    if limiter and hasattr(limiter, 'enabled') and limiter.enabled:
+    if limiter and limiter.default_limits:  # Check if limiter has limits (not disabled)
         return limiter.limit(limit_string)
     return lambda f: f  # No-op decorator
 ```
