@@ -47,6 +47,7 @@ csrf: CSRFProtect = CSRFProtect()
 session: Session = Session()
 
 # GLOBAL limiter (exported as app.limiter so routes can import it)
+# Initialize with safe defaults - will be configured during app creation
 limiter = Limiter(
     key_func=get_remote_address,
     default_limits=["120 per minute"],
@@ -55,6 +56,13 @@ limiter = Limiter(
 # Register models with SQLAlchemy metadata so Alembic can see them
 from .models_conversion import Conversion  # noqa: F401
 from .models_apikey import ApiKey  # noqa: F401
+
+# Helper function for conditional rate limiting
+def conditional_limit(limit_string: str):
+    """Apply rate limit only if limiter is enabled."""
+    if limiter and hasattr(limiter, 'enabled') and limiter.enabled:
+        return limiter.limit(limit_string)
+    return lambda f: f  # No-op decorator
 
 
 # Legacy JSONFormatter kept for backward compatibility
@@ -215,6 +223,7 @@ def create_app() -> Flask:
 
     # Configure limiter with environment settings
     try:
+        # Configure the global limiter instance
         limiter.storage_uri = ENV.get("FLASK_LIMITER_STORAGE_URI", "memory://")
         limiter.default_limits = [ENV.get("GLOBAL_RATE_LIMIT", "120 per minute")]
         limiter.init_app(app)
@@ -228,21 +237,24 @@ def create_app() -> Flask:
             raise RuntimeError(f"Flask-Limiter initialization failed: {e}")
         else:
             app.logger.warning("Flask-Limiter disabled due to initialization failure")
-            limiter = None
+            # Don't reassign limiter - just disable it
+            limiter.enabled = False
 
     # Exempt health checks (keep Render happy)
     try:
         from .health import bp as _health_bp
-        limiter.exempt(_health_bp)
+        if limiter and hasattr(limiter, 'enabled') and limiter.enabled:
+            limiter.exempt(_health_bp)
     except Exception:
         pass
 
     # Optional allowlist: comma-separated IPs in RATE_ALLOWLIST
     from flask import request, jsonify
-    @limiter.request_filter
-    def _allowlist():
-        ips = {ip.strip() for ip in config.RATE_ALLOWLIST.split(",") if ip.strip()}
-        return request.remote_addr in ips
+    if limiter and hasattr(limiter, 'enabled') and limiter.enabled:
+        @limiter.request_filter
+        def _allowlist():
+            ips = {ip.strip() for ip in config.RATE_ALLOWLIST.split(",") if ip.strip()}
+            return request.remote_addr in ips
 
     # Request ID middleware is now handled by structured logging
 
