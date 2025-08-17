@@ -96,41 +96,104 @@ def create_app() -> Flask:
     """Create and configure the Flask application."""
     app = Flask(__name__)
 
+    # Add startup logging
+    app.logger.info("=== Starting mdraft application initialization ===")
+    app.logger.info(f"Environment: {os.getenv('FLASK_ENV', 'development')}")
+    app.logger.info(f"Python version: {os.sys.version}")
+    app.logger.info(f"Working directory: {os.getcwd()}")
+
     # Get centralized configuration
-    config = get_config()
+    try:
+        app.logger.info("Loading configuration...")
+        config = get_config()
+        app.logger.info("Configuration loaded successfully")
+    except Exception as e:
+        app.logger.error(f"Failed to load configuration: {e}")
+        app.logger.error(f"Configuration error type: {type(e).__name__}")
+        app.logger.error(f"Configuration error details: {str(e)}")
+        raise
     
     # Validate configuration and fail fast if invalid
     try:
+        app.logger.info("Validating configuration...")
         config.validate()
         app.logger.info("Configuration validation passed")
     except ConfigurationError as e:
         app.logger.error(f"Configuration validation failed: {e}")
+        app.logger.error(f"Configuration validation error type: {type(e).__name__}")
+        app.logger.error(f"Configuration validation error details: {str(e)}")
+        raise
+    except Exception as e:
+        app.logger.error(f"Unexpected error during configuration validation: {e}")
+        app.logger.error(f"Unexpected error type: {type(e).__name__}")
+        app.logger.error(f"Unexpected error details: {str(e)}")
         raise
     
     # Apply non-sensitive configuration to Flask app
-    app.config.update(config.to_dict())
+    try:
+        app.logger.info("Applying configuration to Flask app...")
+        app.config.update(config.to_dict())
+        app.logger.info("Configuration applied successfully")
+    except Exception as e:
+        app.logger.error(f"Failed to apply configuration: {e}")
+        app.logger.error(f"Configuration application error type: {type(e).__name__}")
+        app.logger.error(f"Configuration application error details: {str(e)}")
+        raise
     
     # Securely apply secrets to Flask app (prevents logging exposure)
-    config.apply_secrets_to_app(app)
+    try:
+        app.logger.info("Applying secrets to Flask app...")
+        config.apply_secrets_to_app(app)
+        app.logger.info("Secrets applied successfully")
+    except Exception as e:
+        app.logger.error(f"Failed to apply secrets: {e}")
+        app.logger.error(f"Secrets application error type: {type(e).__name__}")
+        app.logger.error(f"Secrets application error details: {str(e)}")
+        raise
     
     # Database configuration
-    from .utils.db_url import normalize_db_url
-    db_url = normalize_db_url(config.DATABASE_URL)
-    app.config["SQLALCHEMY_DATABASE_URI"] = db_url
-    app.logger.info("DB driver normalized to psycopg v3")
-    app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-    
-    # SQLAlchemy engine pooling configuration for Render
-    # Optimized for PaaS environment with connection stability
-    app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
-        "pool_pre_ping": True,      # Validate connections before use
-        "pool_size": 5,             # Maintain 5 persistent connections
-        "max_overflow": 5,          # Allow 5 additional connections when pool is full
-        "pool_recycle": 1800,       # Recycle connections after 30 minutes
-        "pool_timeout": 30,         # Wait up to 30 seconds for available connection
-        "echo": False,              # Disable SQL echo in production
-    }
-    app.logger.info("SQLAlchemy engine pooling configured for Render deployment")
+    try:
+        app.logger.info("Configuring database...")
+        from .utils.db_url import normalize_db_url
+        db_url = normalize_db_url(config.DATABASE_URL)
+        app.config["SQLALCHEMY_DATABASE_URI"] = db_url
+        app.logger.info("DB driver normalized to psycopg v3")
+        app.logger.info(f"Database URL type: {type(db_url)}")
+        app.logger.info(f"Database URL length: {len(db_url) if db_url else 0}")
+        app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+        
+        # SQLAlchemy engine pooling configuration - database-specific
+        if "postgresql" in db_url.lower():
+            # PostgreSQL pooling configuration for Render
+            # Optimized for PaaS environment with connection stability
+            app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
+                "pool_pre_ping": True,      # Validate connections before use
+                "pool_size": 5,             # Maintain 5 persistent connections
+                "max_overflow": 5,          # Allow 5 additional connections when pool is full
+                "pool_recycle": 1800,       # Recycle connections after 30 minutes
+                "pool_timeout": 30,         # Wait up to 30 seconds for available connection
+                "echo": False,              # Disable SQL echo in production
+            }
+            app.logger.info("SQLAlchemy PostgreSQL pooling configured for Render deployment")
+        elif "sqlite" in db_url.lower():
+            # SQLite configuration (for testing/development)
+            app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
+                "pool_pre_ping": True,      # Validate connections before use
+                "echo": False,              # Disable SQL echo in production
+            }
+            app.logger.info("SQLAlchemy SQLite configuration applied")
+        else:
+            # Default configuration for other databases
+            app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
+                "pool_pre_ping": True,      # Validate connections before use
+                "echo": False,              # Disable SQL echo in production
+            }
+            app.logger.info("SQLAlchemy default configuration applied")
+    except Exception as e:
+        app.logger.error(f"Failed to configure database: {e}")
+        app.logger.error(f"Database configuration error type: {type(e).__name__}")
+        app.logger.error(f"Database configuration error details: {str(e)}")
+        raise
     
     # Sentry configuration
     import sentry_sdk
@@ -234,18 +297,52 @@ def create_app() -> Flask:
         return resp
 
     # Initialize structured logging
-    setup_logging(app, log_level=level)
+    try:
+        app.logger.info("Initializing structured logging...")
+        setup_logging(app, log_level=level)
+        app.logger.info("Structured logging initialized successfully")
+    except Exception as e:
+        app.logger.error(f"Failed to initialize structured logging: {e}")
+        app.logger.error(f"Logging initialization error type: {type(e).__name__}")
+        app.logger.error(f"Logging initialization error details: {str(e)}")
+        raise
     
     # Initialize request logging middleware
-    from .middleware.logging import init_request_logging
-    init_request_logging(app)
+    try:
+        app.logger.info("Initializing request logging middleware...")
+        from .middleware.logging import init_request_logging
+        init_request_logging(app)
+        app.logger.info("Request logging middleware initialized successfully")
+    except Exception as e:
+        app.logger.error(f"Failed to initialize request logging middleware: {e}")
+        app.logger.error(f"Request logging error type: {type(e).__name__}")
+        app.logger.error(f"Request logging error details: {str(e)}")
+        raise
 
     # Initialise extensions
-    db.init_app(app)
-    migrate.init_app(app, db)
-    bcrypt.init_app(app)
-    login_manager.init_app(app)
-    csrf.init_app(app)
+    try:
+        app.logger.info("Initializing Flask extensions...")
+        db.init_app(app)
+        app.logger.info("SQLAlchemy initialized")
+        
+        migrate.init_app(app, db)
+        app.logger.info("Flask-Migrate initialized")
+        
+        bcrypt.init_app(app)
+        app.logger.info("Flask-Bcrypt initialized")
+        
+        login_manager.init_app(app)
+        app.logger.info("Flask-Login initialized")
+        
+        csrf.init_app(app)
+        app.logger.info("Flask-WTF CSRF initialized")
+        
+        app.logger.info("All Flask extensions initialized successfully")
+    except Exception as e:
+        app.logger.error(f"Failed to initialize Flask extensions: {e}")
+        app.logger.error(f"Extension initialization error type: {type(e).__name__}")
+        app.logger.error(f"Extension initialization error details: {str(e)}")
+        raise
     
     # --- Session Configuration ---
     # Single code path for session configuration with hardened security
@@ -377,53 +474,81 @@ def create_app() -> Flask:
     os.makedirs(processed_path, exist_ok=True)
 
     # Register blueprints containing route definitions
-    from .auth.routes import bp as auth_bp
-    app.register_blueprint(auth_bp)
-    
-    from .ui import bp as ui_bp
-    app.register_blueprint(ui_bp)
-
-    from .health import bp as health_bp
-    app.register_blueprint(health_bp)
-
-    from .beta import bp as beta_bp
-    app.register_blueprint(beta_bp)
-
-    from .api_convert import bp as api_bp
-    app.register_blueprint(api_bp)
-
-    from .api_queue import bp as queue_bp
-    app.register_blueprint(queue_bp)
-
-    from .api_usage import bp as usage_api_bp
-    app.register_blueprint(usage_api_bp)
-
-    from .api_estimate import bp as estimate_api_bp
-    app.register_blueprint(estimate_api_bp)
-
-    from .view import bp as view_bp
-    app.register_blueprint(view_bp)
-
-    from .routes import bp as main_blueprint  # type: ignore
-    app.register_blueprint(main_blueprint)
-    
-    from .admin import bp as admin_bp
-    app.register_blueprint(admin_bp)
-    
-    from .billing import bp as billing_bp
-    app.register_blueprint(billing_bp)
-    
-    from .api.agents import bp as agents_bp
-    app.register_blueprint(agents_bp)
-    
-    from .api.ops import bp as ops_bp
-    app.register_blueprint(ops_bp)
-    
-    from .api.errors import errors
-    app.register_blueprint(errors)
-    
-    from .cli import register_cli
-    register_cli(app)
+    try:
+        app.logger.info("Registering blueprints...")
+        
+        from .auth.routes import bp as auth_bp
+        app.register_blueprint(auth_bp)
+        app.logger.info("Auth blueprint registered")
+        
+        from .ui import bp as ui_bp
+        app.register_blueprint(ui_bp)
+        app.logger.info("UI blueprint registered")
+        
+        from .health import bp as health_bp
+        app.register_blueprint(health_bp)
+        app.logger.info("Health blueprint registered")
+        
+        from .beta import bp as beta_bp
+        app.register_blueprint(beta_bp)
+        app.logger.info("Beta blueprint registered")
+        
+        from .api_convert import bp as api_bp
+        app.register_blueprint(api_bp)
+        app.logger.info("API convert blueprint registered")
+        
+        from .api_queue import bp as queue_bp
+        app.register_blueprint(queue_bp)
+        app.logger.info("API queue blueprint registered")
+        
+        from .api_usage import bp as usage_api_bp
+        app.register_blueprint(usage_api_bp)
+        app.logger.info("API usage blueprint registered")
+        
+        from .api_estimate import bp as estimate_api_bp
+        app.register_blueprint(estimate_api_bp)
+        app.logger.info("API estimate blueprint registered")
+        
+        from .view import bp as view_bp
+        app.register_blueprint(view_bp)
+        app.logger.info("View blueprint registered")
+        
+        from .routes import bp as main_blueprint  # type: ignore
+        app.register_blueprint(main_blueprint)
+        app.logger.info("Main blueprint registered")
+        
+        from .admin import bp as admin_bp
+        app.register_blueprint(admin_bp)
+        app.logger.info("Admin blueprint registered")
+        
+        from .billing import bp as billing_bp
+        app.register_blueprint(billing_bp)
+        app.logger.info("Billing blueprint registered")
+        
+        from .api.agents import bp as agents_bp
+        app.register_blueprint(agents_bp)
+        app.logger.info("API agents blueprint registered")
+        
+        from .api.ops import bp as ops_bp
+        app.register_blueprint(ops_bp)
+        app.logger.info("API ops blueprint registered")
+        
+        from .api.errors import errors
+        app.register_blueprint(errors)
+        app.logger.info("API errors blueprint registered")
+        
+        from .cli import register_cli
+        register_cli(app)
+        app.logger.info("CLI commands registered")
+        
+        app.logger.info("All blueprints registered successfully")
+        
+    except Exception as e:
+        app.logger.error(f"Failed to register blueprints: {e}")
+        app.logger.error(f"Blueprint registration error type: {type(e).__name__}")
+        app.logger.error(f"Blueprint registration error details: {str(e)}")
+        app.logger.error(f"Blueprint registration error traceback: {e.__traceback__}")
+        raise
     
     # Register worker blueprint if running as worker service
     if ENV.get("WORKER_SERVICE", "false").lower() == "true":
@@ -460,7 +585,51 @@ def create_app() -> Flask:
         except Exception as e:
             app.logger.error(f"DB probe error: {e}")
 
-    # Error handling is now managed by the errors blueprint
-    # which provides unified JSON error responses with Sentry integration
+    # Add comprehensive error handler for unhandled exceptions
+    @app.errorhandler(Exception)
+    def handle_unexpected_error(error):
+        """Handle any unhandled exceptions with detailed logging."""
+        app.logger.error(f"Unhandled exception: {error}")
+        app.logger.error(f"Exception type: {type(error).__name__}")
+        app.logger.error(f"Exception details: {str(error)}")
+        
+        # Log request context if available
+        if has_request_context():
+            app.logger.error(f"Request URL: {request.url}")
+            app.logger.error(f"Request method: {request.method}")
+            app.logger.error(f"Request headers: {dict(request.headers)}")
+            app.logger.error(f"Request remote addr: {request.remote_addr}")
+        
+        # Return a generic error response
+        return {"error": "Internal server error", "detail": "An unexpected error occurred"}, 500
 
+    # Add startup validation
+    try:
+        app.logger.info("Performing startup validation...")
+        
+        # Check if critical routes are registered
+        root_routes = [r for r in app.url_map.iter_rules() if r.rule == "/"]
+        app.logger.info(f"Root routes registered: {len(root_routes)}")
+        for route in root_routes:
+            app.logger.info(f"  - {route.endpoint}")
+        
+        # Check if health endpoint is available
+        health_routes = [r for r in app.url_map.iter_rules() if "health" in r.rule]
+        app.logger.info(f"Health routes registered: {len(health_routes)}")
+        for route in health_routes:
+            app.logger.info(f"  - {route.rule} -> {route.endpoint}")
+        
+        # Log total number of routes
+        total_routes = len(list(app.url_map.iter_rules()))
+        app.logger.info(f"Total routes registered: {total_routes}")
+        
+        app.logger.info("Startup validation completed successfully")
+        
+    except Exception as e:
+        app.logger.error(f"Startup validation failed: {e}")
+        app.logger.error(f"Validation error type: {type(e).__name__}")
+        app.logger.error(f"Validation error details: {str(e)}")
+        # Don't raise here, just log the error
+
+    app.logger.info("=== mdraft application initialization completed successfully ===")
     return app
