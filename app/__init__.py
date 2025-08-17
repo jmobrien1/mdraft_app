@@ -47,17 +47,9 @@ csrf: CSRFProtect = CSRFProtect()
 session: Session = Session()
 
 # GLOBAL limiter (exported as app.limiter so routes can import it)
-# Note: Limiter is initialized before config is available, so we use ENV directly
-storage_uri = ENV.get("FLASK_LIMITER_STORAGE_URI")
-if storage_uri:
-    # Strip any trailing whitespace/newlines that could break Flask-Limiter
-    storage_uri = storage_uri.strip()
-    print(f"Flask-Limiter storage URI: {storage_uri[:20]}..." if len(storage_uri) > 20 else storage_uri)
-
 limiter = Limiter(
     key_func=get_remote_address,
-    storage_uri=storage_uri,
-    default_limits=[ENV.get("GLOBAL_RATE_LIMIT", "120 per minute")],
+    default_limits=["120 per minute"],
 )
 
 # Register models with SQLAlchemy metadata so Alembic can see them
@@ -221,8 +213,10 @@ def create_app() -> Flask:
     # Flask-Limiter configuration
     app.config.setdefault("RATELIMIT_HEADERS_ENABLED", True)
 
-    # Initialize the global limiter on the app with error handling
+    # Configure limiter with environment settings
     try:
+        limiter.storage_uri = ENV.get("FLASK_LIMITER_STORAGE_URI", "memory://")
+        limiter.default_limits = [ENV.get("GLOBAL_RATE_LIMIT", "120 per minute")]
         limiter.init_app(app)
         app.logger.info("Flask-Limiter initialized successfully")
     except Exception as e:
