@@ -486,10 +486,11 @@ def create_app() -> Flask:
     global session
     session = Session()
     
-    # If we have a Redis client, pass it explicitly to Flask-Session
+    # If we have a Redis client, set it in the app configuration for Flask-Session
     if redis_client and app.config.get("SESSION_TYPE") == "redis":
-        app.logger.info("Initializing Flask-Session with explicit Redis client")
-        session.init_app(app, redis_client)
+        app.logger.info("Setting Redis client in app configuration for Flask-Session")
+        app.config["SESSION_REDIS"] = redis_client
+        session.init_app(app)
     else:
         app.logger.info("Initializing Flask-Session with default configuration")
         session.init_app(app)
