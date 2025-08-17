@@ -50,11 +50,14 @@ def _prompt_path(current_app, hyphen_name: str, underscore_name: str) -> str:
     return p1
 
 
-@bp.route("/", methods=["GET"])
+@bp.route("/home", methods=["GET"])
 @limiter.limit(lambda: current_app.config.get("INDEX_RATE_LIMIT", "50 per minute"), 
                key_func=lambda: f"index:ip:{request.remote_addr}")
-def index() -> Any:
-    """Return a welcome message indicating the service is running."""
+def home() -> Any:
+    """Return a welcome message indicating the service is running.
+    
+    This endpoint is deprecated. The canonical homepage is now at "/".
+    """
     return jsonify({"status": "ok", "message": "Welcome to mdraft!"})
 
 
