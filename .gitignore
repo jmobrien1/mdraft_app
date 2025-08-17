@@ -48,6 +48,7 @@ env/
 uploads/
 processed/
 *.log
+flask_session/
 
 # Google Cloud
 service-account-key.json
