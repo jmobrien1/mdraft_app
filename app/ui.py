@@ -8,6 +8,8 @@ from __future__ import annotations
 from typing import Any
 from flask import Blueprint, render_template, request, jsonify, current_app, make_response
 from flask_login import login_required, current_user
+import os
+import sys
 
 from . import db
 from .models import Job, User, Proposal
@@ -31,6 +33,40 @@ def index() -> Any:
     #     current_app.logger.error(f"Error details: {str(e)}")
     #     # Return a simple error page instead of letting the exception bubble up
     #     return render_template("errors/500.html"), 500
+
+
+@bp.route("/test")
+def test() -> Any:
+    """Minimal test route for debugging production issues."""
+    try:
+        current_app.logger.info("Test route accessed successfully")
+        return "<h1>Test route works!</h1><p>Basic routing is functional.</p>"
+    except Exception as e:
+        current_app.logger.error(f"Test route failed: {e}")
+        return f"<h1>Test route failed</h1><p>Error: {str(e)}</p>", 500
+
+
+@bp.route("/debug")
+def debug() -> Any:
+    """Debug route to check app state."""
+    try:
+        info = {
+            "app_name": current_app.name,
+            "app_debug": current_app.debug,
+            "app_testing": current_app.testing,
+            "environment": os.getenv("FLASK_ENV", "development"),
+            "python_version": sys.version,
+            "working_directory": os.getcwd(),
+        }
+        
+        html = "<h1>Debug Information</h1><ul>"
+        for key, value in info.items():
+            html += f"<li><strong>{key}:</strong> {value}</li>"
+        html += "</ul>"
+        
+        return html
+    except Exception as e:
+        return f"<h1>Debug route failed</h1><p>Error: {str(e)}</p>", 500
 
 
 @bp.route("/compliance-matrix/<int:proposal_id>")

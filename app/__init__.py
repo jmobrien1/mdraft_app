@@ -236,8 +236,16 @@ def create_app() -> Flask:
     storage_uri = ENV.get("FLASK_LIMITER_STORAGE_URI", "memory://")
     default_limits = [ENV.get("GLOBAL_RATE_LIMIT", "120 per minute")]
     
-    # Configure the global limiter instance
-    limiter.storage_uri = storage_uri
+    # Configure the global limiter instance with Redis URL cleaning
+    if storage_uri and storage_uri != "memory://":
+        # Clean the Redis URL to remove any trailing whitespace
+        clean_storage_uri = storage_uri.strip()
+        limiter.storage_uri = clean_storage_uri
+        app.logger.info(f"Flask-Limiter using Redis storage: {clean_storage_uri[:20]}...")
+    else:
+        limiter.storage_uri = "memory://"
+        app.logger.info("Flask-Limiter using memory storage")
+    
     limiter.default_limits = default_limits
     
     # Try to initialize with the app
@@ -250,9 +258,13 @@ def create_app() -> Flask:
         app.logger.error(f"Limiter error type: {type(e).__name__}")
         app.logger.error(f"Limiter error details: {str(e)}")
         
-        # In production, we should fail fast for rate limiting issues
+        # In production, continue without rate limiting instead of crashing
         if os.getenv("FLASK_ENV") == "production":
-            raise RuntimeError(f"Flask-Limiter initialization failed: {e}")
+            app.logger.warning("Flask-Limiter disabled due to initialization failure - continuing without rate limiting")
+            # Fall back to memory storage
+            limiter.storage_uri = "memory://"
+            limiter.default_limits = []
+            _limiter_initialized = False
         else:
             app.logger.warning("Flask-Limiter disabled due to initialization failure")
             # Disable by clearing limits - limiter object still exists
@@ -396,33 +408,48 @@ def create_app() -> Flask:
     # --- Session Configuration ---
     # Single code path for session configuration with hardened security
     if config.SESSION_BACKEND == "redis":
-        # Redis session configuration for production
-        app.config["SESSION_TYPE"] = "redis"
-        
-        # Create Redis client for session storage
         try:
-            redis_client = config.create_session_redis_client()
-            app.config["SESSION_REDIS"] = redis_client
+            app.logger.info("Configuring Redis session backend...")
             
-            # Log which Redis URL is being used
+            # Clean Redis URLs to remove any trailing whitespace
             if config.SESSION_REDIS_URL:
-                app.logger.info(f"Using SESSION_REDIS_URL for session storage: {config.SESSION_REDIS_URL}")
+                clean_redis_url = config.SESSION_REDIS_URL.strip()
+                app.config["SESSION_REDIS_URL"] = clean_redis_url
+                app.logger.info(f"Using SESSION_REDIS_URL for session storage: {clean_redis_url[:20]}...")
+            elif config.REDIS_URL:
+                clean_redis_url = config.REDIS_URL.strip()
+                app.config["SESSION_REDIS_URL"] = clean_redis_url
+                app.logger.info(f"Using REDIS_URL for session storage: {clean_redis_url[:20]}...")
             else:
-                app.logger.info(f"Using REDIS_URL for session storage: {config.REDIS_URL}")
+                app.logger.warning("No Redis URL configured, falling back to filesystem sessions")
+                app.config["SESSION_TYPE"] = "filesystem"
+                app.logger.info("Using filesystem session backend (fallback)")
                 
             # Test Redis connection
-            redis_client.ping()
-            app.logger.info("Redis session connection successful")
-            
+            if app.config.get("SESSION_REDIS_URL"):
+                import redis
+                redis_client = redis.from_url(
+                    app.config["SESSION_REDIS_URL"], 
+                    decode_responses=True,
+                    socket_connect_timeout=5,
+                    socket_timeout=5
+                )
+                redis_client.ping()
+                app.logger.info("Redis session connection successful")
+                
         except Exception as e:
             if os.getenv("FLASK_ENV") == "production":
                 app.logger.error(f"Failed to initialize Redis session backend: {e}")
-                raise RuntimeError(f"Redis session backend initialization failed: {e}")
+                app.logger.error(f"Redis error type: {type(e).__name__}")
+                app.logger.error(f"Redis error details: {str(e)}")
+                # In production, fall back to filesystem sessions instead of crashing
+                app.logger.warning("Falling back to filesystem sessions due to Redis failure")
+                app.config["SESSION_TYPE"] = "filesystem"
+                app.logger.info("Using filesystem session backend (fallback)")
             else:
                 app.logger.warning(f"Redis session backend failed, falling back to filesystem: {e}")
                 app.config["SESSION_TYPE"] = "filesystem"
                 app.logger.info("Using filesystem session backend (fallback)")
-                
     elif config.SESSION_BACKEND == "null":
         # Disable sessions entirely (for testing or minimal deployments)
         app.config["SESSION_TYPE"] = "null"
@@ -677,8 +704,34 @@ def create_app() -> Flask:
             app.logger.error(f"Request headers: {dict(request.headers)}")
             app.logger.error(f"Request remote addr: {request.remote_addr}")
         
+        # Log full traceback for debugging
+        import traceback
+        app.logger.error(f"Full traceback: {traceback.format_exc()}")
+        
         # Return a generic error response
         return {"error": "Internal server error", "detail": "An unexpected error occurred"}, 500
+
+    # Add specific 500 error handler for better debugging
+    @app.errorhandler(500)
+    def handle_500_error(error):
+        """Handle 500 errors with detailed logging."""
+        app.logger.error(f"500 Internal Server Error: {error}")
+        app.logger.error(f"Error type: {type(error).__name__}")
+        app.logger.error(f"Error details: {str(error)}")
+        
+        # Log request context
+        if has_request_context():
+            app.logger.error(f"Request URL: {request.url}")
+            app.logger.error(f"Request method: {request.method}")
+            app.logger.error(f"Request remote addr: {request.remote_addr}")
+            app.logger.error(f"Request user agent: {request.headers.get('User-Agent', 'Unknown')}")
+        
+        # Log full traceback
+        import traceback
+        app.logger.error(f"500 error traceback: {traceback.format_exc()}")
+        
+        # Return a simple error response
+        return "<h1>500 Internal Server Error</h1><p>An error occurred while processing your request.</p>", 500
 
     # Add startup validation
     try:
