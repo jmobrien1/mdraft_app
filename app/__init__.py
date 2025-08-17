@@ -412,6 +412,7 @@ def create_app() -> Flask:
     limiter_redis_url = ENV.get("FLASK_LIMITER_STORAGE_URI") or redis_url
     
     # Configure Redis client properly for rediss:// URLs
+    redis_client = None
     if redis_url:
         try:
             import redis
@@ -422,15 +423,19 @@ def create_app() -> Flask:
             is_tls = parsed_url.scheme == 'rediss'
             
             if is_tls:
-                # For rediss:// URLs, let the URL handle TLS configuration
-                # Don't pass additional ssl parameters that might conflict
+                # For rediss:// URLs, explicitly configure SSL settings
                 redis_client = redis.from_url(
                     session_redis_url,
                     decode_responses=False,  # Flask-Session handles encoding/decoding
                     socket_keepalive=True,
                     socket_keepalive_options={},
                     health_check_interval=30,
-                    retry_on_error=[redis.BusyLoadingError, redis.ConnectionError, redis.TimeoutError]
+                    retry_on_error=[redis.BusyLoadingError, redis.ConnectionError, redis.TimeoutError],
+                    ssl_cert_reqs='none',  # Don't verify SSL certificates
+                    ssl_check_hostname=False,
+                    ssl_ca_certs=None,
+                    ssl_certfile=None,
+                    ssl_keyfile=None,
                 )
             else:
                 # For redis:// URLs, standard configuration
@@ -450,7 +455,6 @@ def create_app() -> Flask:
             app.logger.warning(f"Redis connection failed: {e}. Falling back to filesystem sessions.")
             redis_client = None
     else:
-        redis_client = None
         app.logger.info("No Redis URL provided, using filesystem sessions")
 
     # Session Configuration
@@ -476,9 +480,17 @@ def create_app() -> Flask:
     limiter.init_app(app)
     if limiter_redis_url:
         try:
-            # Test limiter Redis connection
+            # Test limiter Redis connection with proper SSL configuration
             import redis
-            test_client = redis.from_url(limiter_redis_url, decode_responses=True)
+            if limiter_redis_url.startswith('rediss://'):
+                test_client = redis.from_url(
+                    limiter_redis_url, 
+                    decode_responses=True,
+                    ssl_cert_reqs='none',
+                    ssl_check_hostname=False
+                )
+            else:
+                test_client = redis.from_url(limiter_redis_url, decode_responses=True)
             test_client.ping()
             app.logger.info("Rate limiter Redis connection successful")
         except Exception as e:

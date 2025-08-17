@@ -11,20 +11,25 @@ def make_celery():
     c.conf.task_default_exchange = 'mdraft_default'
     c.conf.task_default_routing_key = 'mdraft_default'
     
-    # TLS configuration for rediss:// URLs - FIXED
+    # FIXED: TLS configuration for rediss:// URLs
     if broker and broker.startswith("rediss://"):
-        # For rediss:// URLs, use minimal SSL configuration
-        # Don't use ssl_cert_reqs as it may not be supported
+        # For rediss:// URLs, explicitly set ssl_cert_reqs as required by redis-py
         c.conf.broker_use_ssl = {
+            'ssl_cert_reqs': 'CERT_NONE',  # Don't verify SSL certificates
             'ssl_check_hostname': False,
-            'ssl_verify_mode': 'CERT_NONE'  # Use string instead of ssl.CERT_NONE
+            'ssl_ca_certs': None,
+            'ssl_certfile': None,
+            'ssl_keyfile': None,
         }
         
         # Only configure redis_backend_use_ssl if backend is also rediss://
         if backend and backend.startswith("rediss://"):
             c.conf.redis_backend_use_ssl = {
+                'ssl_cert_reqs': 'CERT_NONE',  # Don't verify SSL certificates
                 'ssl_check_hostname': False,
-                'ssl_verify_mode': 'CERT_NONE'
+                'ssl_ca_certs': None,
+                'ssl_certfile': None,
+                'ssl_keyfile': None,
             }
     
     # Worker configuration
@@ -33,6 +38,11 @@ def make_celery():
     c.conf.worker_max_tasks_per_child = 1000
     c.conf.task_soft_time_limit = 600  # 10 minutes
     c.conf.task_time_limit = 900       # 15 minutes
+    
+    # Connection pool settings for Redis
+    c.conf.broker_connection_retry = True
+    c.conf.broker_connection_retry_on_startup = True
+    c.conf.broker_connection_max_retries = 10
     
     # Task routing for priority queue
     c.conf.task_routes = {
@@ -49,11 +59,6 @@ def make_celery():
             'schedule': 86400.0,  # 24 hours in seconds
         },
     }
-    
-    # Connection pool settings for Redis
-    c.conf.broker_connection_retry = True
-    c.conf.broker_connection_retry_on_startup = True
-    c.conf.broker_connection_max_retries = 10
     
     return c
 

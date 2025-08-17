@@ -296,3 +296,16 @@ def health() -> tuple[Dict[str, Any], int]:
     except Exception as e:
         logger.exception("Database health check failed")
         return jsonify({"status": "database_error", "error": str(e)}), 503
+
+
+@bp.get("/health/simple")
+def health_simple() -> tuple[Dict[str, Any], int]:
+    """Simple health check endpoint for Render.
+    
+    This endpoint returns immediately without database checks.
+    Used by Render's health check system.
+    
+    Returns:
+        Simple JSON response indicating service is running
+    """
+    return jsonify({"status": "ok", "service": "mdraft"}), 200
