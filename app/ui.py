@@ -20,8 +20,15 @@ bp = Blueprint("ui", __name__)
 @bp.route("/")
 def index() -> Any:
     """Render the main application page."""
-    # Temporary simple response to test routing
-    return "<h1>SUCCESS! Homepage routing works!</h1>"
+    try:
+        current_app.logger.info("Rendering index page")
+        return render_template("index.html")
+    except Exception as e:
+        current_app.logger.error(f"Error rendering index page: {e}")
+        current_app.logger.error(f"Error type: {type(e).__name__}")
+        current_app.logger.error(f"Error details: {str(e)}")
+        # Return a simple error page instead of letting the exception bubble up
+        return render_template("errors/500.html"), 500
     
     # Comment out your original code temporarily:
     # try:
