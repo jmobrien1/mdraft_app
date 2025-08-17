@@ -8,7 +8,13 @@ echo "=== MIGRATION SENTRY: starting ==="
 export PYTHONPATH="${PYTHONPATH:-/opt/render/project/src}"
 export FLASK_APP="${FLASK_APP:-wsgi.py}"
 
-: "${DATABASE_URL:?DATABASE_URL is not set}"
+# Check if DATABASE_URL is available (may not be during pre-deployment)
+if [[ -z "${DATABASE_URL:-}" ]]; then
+    echo "WARNING: DATABASE_URL not set during pre-deployment - skipping migrations"
+    echo "Migrations will run during application startup when environment variables are available"
+    exit 0
+fi
+
 export SQLALCHEMY_DATABASE_URI="${SQLALCHEMY_DATABASE_URI:-$DATABASE_URL}"
 
 # Set session configuration for pre-deployment script
