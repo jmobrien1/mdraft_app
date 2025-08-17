@@ -443,7 +443,7 @@ def create_app() -> Flask:
                 
                 redis_client = redis.from_url(
                     redis_url,
-                    decode_responses=True,
+                    decode_responses=False,  # Flask-Session handles encoding/decoding
                     socket_connect_timeout=5,
                     socket_timeout=5,
                     retry_on_timeout=True,
@@ -503,13 +503,12 @@ def create_app() -> Flask:
     global session
     session = Session()
     
-    # If we have a Redis client, set it in the app configuration for Flask-Session
+    # If we have a Redis client, initialize Flask-Session with it directly
     app.logger.info(f"Session configuration - SESSION_TYPE: {app.config.get('SESSION_TYPE')}, redis_client: {redis_client is not None}")
     
     if redis_client and app.config.get("SESSION_TYPE") == "redis":
-        app.logger.info("Setting Redis client in app configuration for Flask-Session")
-        app.config["SESSION_REDIS"] = redis_client
-        session.init_app(app)
+        app.logger.info("Initializing Flask-Session with Redis client")
+        session.init_app(app, redis_client)
     else:
         app.logger.info("Initializing Flask-Session with default configuration")
         session.init_app(app)

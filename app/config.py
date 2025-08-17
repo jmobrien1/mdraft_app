@@ -746,7 +746,7 @@ class AppConfig:
             import redis
             return redis.from_url(
                 self.SESSION_REDIS_URL_FINAL,
-                decode_responses=True,
+                decode_responses=False,  # Flask-Session handles encoding/decoding
                 socket_connect_timeout=5,
                 socket_timeout=5,
                 retry_on_timeout=True,
