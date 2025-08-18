@@ -275,9 +275,19 @@ def create_app() -> Flask:
             def fallback_health():
                 return {"status": "degraded", "blueprint_errors": blueprint_errors}
             
+            @app.route('/health/simple')
+            def fallback_health_simple():
+                return {"ok": True}, 200
+            
             @app.route('/')
             def fallback_root():
                 return {"status": "running", "note": "degraded mode"}
+        
+        # Add essential health endpoints that Render expects
+        @app.route('/health/simple')
+        def health_simple():
+            """Fast health check endpoint for Render health checks."""
+            return {"ok": True}, 200
         
         # Initialize Flask-Login on this app
         login_manager.init_app(app)
