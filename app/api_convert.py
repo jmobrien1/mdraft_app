@@ -83,8 +83,12 @@ def _atomic_upload_handler(file_hash: str, filename: str, original_mime: str,
     from .celery_tasks import enqueue_conversion_task
     
     # Start transaction (only if not already in one)
-    if not db.session.in_transaction():
+    # Use a try/except approach since in_transaction() might not be available
+    try:
         db.session.begin()
+    except Exception:
+        # Transaction might already be in progress, continue
+        pass
     
     try:
         # Build the WHERE clause for the SELECT ... FOR UPDATE query
