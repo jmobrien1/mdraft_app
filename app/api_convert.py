@@ -305,7 +305,9 @@ def api_upload():
     # Get correlation ID for logging
     correlation_id = request.headers.get('X-Correlation-ID') or request.headers.get('X-Request-ID')
     
+    current_app.logger.info("Starting file validation...")
     validation_result = validate_upload_file(file.stream, file.filename, correlation_id)
+    current_app.logger.info("File validation completed successfully")
     
     if not validation_result.is_valid:
         error_response = {"error": validation_result.error.value}
@@ -330,23 +332,31 @@ def api_upload():
         return jsonify(error="invalid_callback_url"), 400
 
     # Save file temporarily for processing
+    current_app.logger.info("Saving file to temporary location...")
     with tempfile.NamedTemporaryFile(delete=False) as tmp:
         file.save(tmp.name)
         tmp_path = tmp.name
+    current_app.logger.info(f"File saved to temporary location: {tmp_path}")
     
     try:
         # Enforce security checks
+        current_app.logger.info("Starting security checks...")
         fallback_mime = (file.mimetype or None)
+        current_app.logger.info(f"Fallback MIME type: {fallback_mime}")
         mime, category = sniff_category(tmp_path, fallback_mime=fallback_mime)
+        current_app.logger.info(f"Security check result - MIME: {mime}, Category: {category}")
         if category is None:
             return jsonify(error="unsupported_media_type", mime=(mime or fallback_mime)), 415
         if not size_ok(tmp_path, category):
             return jsonify(error="payload_too_large", category=category), 413
 
         # Calculate SHA256 for idempotency
+        current_app.logger.info("Calculating SHA256 hash...")
         file_hash = sha256_file(tmp_path)
+        current_app.logger.info(f"SHA256 hash calculated: {file_hash[:8]}...")
         original_size = os.path.getsize(tmp_path)
         original_mime = mime or fallback_mime or "application/octet-stream"
+        current_app.logger.info(f"File size: {original_size}, MIME: {original_mime}")
 
         # Check for force flag (bypass idempotency)
         force = (request.args.get("force") in ("1","true","yes"))
