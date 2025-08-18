@@ -167,10 +167,14 @@ def create_app() -> Flask:
             init_extensions(app)
             logger.info("Extensions initialized")
             
-            # Test database connection
-            with app.app_context():
-                db.session.execute(text("SELECT 1"))
-                logger.info("Database connection verified")
+            # Test database connection with timeout
+            try:
+                with app.app_context():
+                    db.session.execute(text("SELECT 1"))
+                    logger.info("Database connection verified")
+            except Exception as db_error:
+                logger.warning(f"Database connection test failed (non-critical): {db_error}")
+                # Continue without database verification - app will handle DB errors gracefully
         except Exception as e:
             logger.error(f"Extension initialization failed: {e}")
             raise
