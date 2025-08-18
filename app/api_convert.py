@@ -266,8 +266,6 @@ def api_upload():
     current_app.logger.info(f"Request files: {list(request.files.keys()) if request.files else 'None'}")
     current_app.logger.info(f"Request form: {list(request.form.keys()) if request.form else 'None'}")
     
-    try:
-    
     # Check if login is required for conversion
     REQUIRE_LOGIN_CONVERT = os.getenv("CONVERT_REQUIRES_LOGIN", "0") in {"1", "true", "True"}
     
@@ -402,12 +400,7 @@ def api_upload():
             error_detail = f"{type(e).__name__}: {str(e)}"
             return jsonify({"error": "server_error", "detail": error_detail[:200]}), 500
     
-    except Exception as e:
-        current_app.logger.exception("=== api_upload() failed with exception ===")
-        current_app.logger.error(f"Exception type: {type(e).__name__}")
-        current_app.logger.error(f"Exception message: {str(e)}")
-        # Re-raise the exception so the error handler can process it
-        raise
+
 
     finally:
         try: 
