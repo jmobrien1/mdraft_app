@@ -257,6 +257,16 @@ def api_upload():
     """
     import os
     from flask_login import current_user
+    from flask import current_app
+    
+    # Add debugging at the very beginning
+    current_app.logger.info("=== api_upload() called ===")
+    current_app.logger.info(f"Request method: {request.method}")
+    current_app.logger.info(f"Request path: {request.path}")
+    current_app.logger.info(f"Request files: {list(request.files.keys()) if request.files else 'None'}")
+    current_app.logger.info(f"Request form: {list(request.form.keys()) if request.form else 'None'}")
+    
+    try:
     
     # Check if login is required for conversion
     REQUIRE_LOGIN_CONVERT = os.getenv("CONVERT_REQUIRES_LOGIN", "0") in {"1", "true", "True"}
@@ -391,6 +401,13 @@ def api_upload():
             # Include more detailed error information for debugging
             error_detail = f"{type(e).__name__}: {str(e)}"
             return jsonify({"error": "server_error", "detail": error_detail[:200]}), 500
+    
+    except Exception as e:
+        current_app.logger.exception("=== api_upload() failed with exception ===")
+        current_app.logger.error(f"Exception type: {type(e).__name__}")
+        current_app.logger.error(f"Exception message: {str(e)}")
+        # Re-raise the exception so the error handler can process it
+        raise
 
     finally:
         try: 
@@ -585,9 +602,18 @@ def api_convert():
     uses the /api/convert path that the UI expects.
     """
     import os
-    from flask import make_response
+    from flask import make_response, current_app
     from app.auth.visitor import get_or_create_visitor_session_id
     from flask_login import current_user
+    
+    # Add debugging at the very beginning
+    current_app.logger.info("=== api_convert() called ===")
+    current_app.logger.info(f"Request method: {request.method}")
+    current_app.logger.info(f"Request path: {request.path}")
+    current_app.logger.info(f"Request files: {list(request.files.keys()) if request.files else 'None'}")
+    current_app.logger.info(f"Request form: {list(request.form.keys()) if request.form else 'None'}")
+    
+    try:
     
     # Check if login is required for conversion
     REQUIRE_LOGIN_CONVERT = os.getenv("CONVERT_REQUIRES_LOGIN", "0") in {"1", "true", "True"}
@@ -620,6 +646,13 @@ def api_convert():
         return resp
     
     return result
+    
+    except Exception as e:
+        current_app.logger.exception("=== api_convert() failed with exception ===")
+        current_app.logger.error(f"Exception type: {type(e).__name__}")
+        current_app.logger.error(f"Exception message: {str(e)}")
+        # Re-raise the exception so the error handler can process it
+        raise
 
 @bp.get("/conversions")
 @limiter.limit("240 per minute")  # Rate limit configured in centralized config
