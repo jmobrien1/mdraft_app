@@ -4,7 +4,9 @@ services:
     env: python
     buildCommand: pip install -r requirements.txt
     runtime: python-3.11.11
-    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 2 --threads 8 --timeout 120 --access-logfile - --error-logfile - --preload wsgi:app
+    startCommand: |
+      flask --app app:create_app db upgrade &&
+      gunicorn --bind 0.0.0.0:$PORT --workers 2 --threads 8 --timeout 120 --access-logfile - --error-logfile - --preload wsgi:app
     healthCheckPath: /health/simple
     healthCheckTimeout: 300
     envVars:
@@ -28,7 +30,7 @@ services:
     env: python
     buildCommand: pip install -r requirements.txt
     runtime: python-3.11.11
-    startCommand: celery -A celery_worker.celery worker --loglevel=info --pool=threads --concurrency=2 --without-gossip --without-mingle --without-heartbeat
+    startCommand: celery -A celery_worker:celery worker --loglevel=info --pool=threads --concurrency=2 --without-gossip --without-mingle --without-heartbeat
     envVars:
       - key: FLASK_DEBUG
         value: "0"
