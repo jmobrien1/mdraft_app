@@ -394,7 +394,6 @@ def api_upload():
                 return jsonify({"error": "server_error", "detail": "Storage backend not initialized"}), 500
             
             if kind == "gcs":
-                from werkzeug.utils import secure_filename
                 blob_name = secure_filename(file.filename or "upload.bin")
                 client, bucket = handle
                 blob = bucket.blob(f"uploads/{blob_name}")
@@ -478,7 +477,6 @@ def _legacy_upload_handler(tmp_path: str, filename: str, file_hash: str,
         kind, handle = current_app.extensions.get("storage", ("local", None))
         
         if kind == "gcs":
-            from werkzeug.utils import secure_filename
             blob_name = f"uploads/{uuid.uuid4()}-{secure_filename(filename)}"
             client, bucket = handle
             blob = bucket.blob(blob_name)
