@@ -8,7 +8,10 @@ fallback to local storage for development environments.
 from __future__ import annotations
 
 import os
+import logging
 from werkzeug.utils import secure_filename
+
+logger = logging.getLogger(__name__)
 
 class LocalStorage:
     def __init__(self, base="/tmp/uploads"):
@@ -41,25 +44,42 @@ def init_storage(app):
         
         if not os.path.exists(cred_path):
             app.logger.warning(f"GCS credentials not found at {cred_path}; falling back to local storage")
+            app.logger.info("To use GCS, set GOOGLE_APPLICATION_CREDENTIALS environment variable or mount credentials at /etc/secrets/gcp.json")
         else:
             # Check for GCS bucket configuration
             bucket_name = app.config.get("GCS_BUCKET") or os.getenv("GCS_BUCKET_NAME")
             if not bucket_name:
                 app.logger.warning("GCS_BUCKET not configured; falling back to local storage")
+                app.logger.info("To use GCS, set GCS_BUCKET environment variable")
             else:
                 try:
-                    from google.cloud import storage as _gcs
+                    # Check if google-cloud-storage is available
+                    try:
+                        from google.cloud import storage as _gcs
+                    except ImportError:
+                        app.logger.warning("google-cloud-storage package not installed; falling back to local storage")
+                        app.logger.info("To use GCS, install with: pip install google-cloud-storage")
+                        raise ImportError("google-cloud-storage not available")
+                    
+                    # Test credentials and bucket access
                     client = _gcs.Client.from_service_account_json(cred_path)
                     bucket = client.bucket(bucket_name)
                     
-                    # Test the connection
-                    bucket.reload()
+                    # Test the connection with a simple operation
+                    try:
+                        bucket.reload()
+                        app.logger.info(f"GCS connection test successful for bucket: {bucket_name}")
+                    except Exception as e:
+                        app.logger.warning(f"GCS bucket access test failed: {e}")
+                        raise
                     
                     app.extensions["storage"] = ("gcs", (client, bucket))
                     app.logger.info(f"Storage backend: GCS (bucket: {bucket_name})")
                     return
+                    
                 except Exception as e:
                     app.logger.exception(f"GCS initialization failed; falling back to local storage: {e}")
+                    app.logger.info("Check GCS credentials, bucket permissions, and network connectivity")
     
     # Fallback to local storage
     local_base = os.getenv("UPLOAD_DIR", "/tmp/uploads")

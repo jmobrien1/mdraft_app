@@ -2,18 +2,33 @@
 from __future__ import annotations
 import os, logging
 from typing import List, Dict, Any
-from openai import OpenAI
-from app.services.prompt_sanitization import sanitize_for_prompt
-# Exception classes vary by SDK version; import broadly and fall back to Exception.
+
+# Graceful handling of missing OpenAI package
 try:
+    from openai import OpenAI
     from openai import (
         APIError, APIConnectionError, RateLimitError, BadRequestError,
         AuthenticationError, PermissionDeniedError, NotFoundError, UnprocessableEntityError
     )
-except Exception:  # pragma: no cover
-    APIError = APIConnectionError = RateLimitError = BadRequestError = Exception
-    AuthenticationError = PermissionDeniedError = NotFoundError = UnprocessableEntityError = Exception
+    OPENAI_AVAILABLE = True
+except ImportError:
+    # Create dummy classes for when OpenAI is not available
+    class OpenAI:
+        def __init__(self, *args, **kwargs):
+            raise RuntimeError("OpenAI package not installed. Install with: pip install openai")
+    
+    class APIError(Exception): pass
+    class APIConnectionError(Exception): pass
+    class RateLimitError(Exception): pass
+    class BadRequestError(Exception): pass
+    class AuthenticationError(Exception): pass
+    class PermissionDeniedError(Exception): pass
+    class NotFoundError(Exception): pass
+    class UnprocessableEntityError(Exception): pass
+    
+    OPENAI_AVAILABLE = False
 
+from app.services.prompt_sanitization import sanitize_for_prompt
 from .reliability import (
     create_retry_decorator, with_timeout, resilient_call,
     ReliabilityError, ExternalServiceError
@@ -40,6 +55,9 @@ def _get_request_id() -> str:
             return "unknown"
 
 def _get_client() -> OpenAI:
+    if not OPENAI_AVAILABLE:
+        raise RuntimeError("OpenAI package not available. Install with: pip install openai")
+    
     api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
     if not api_key:
         raise AuthenticationError(message="missing OPENAI_API_KEY", response=None, body=None)  # type: ignore
@@ -68,6 +86,9 @@ def _get_client() -> OpenAI:
 
 def _create_chat_completion(client: OpenAI, params: Dict[str, Any], response_json_hint: bool = True) -> str:
     """Create chat completion with reliability features."""
+    if not OPENAI_AVAILABLE:
+        raise RuntimeError("OpenAI package not available. Install with: pip install openai")
+    
     def _call_openai():
         if response_json_hint:
             try:
@@ -89,6 +110,9 @@ def _create_chat_completion(client: OpenAI, params: Dict[str, Any], response_jso
     )
 
 def chat_json(messages, response_json_hint=True, model=None, max_tokens=700):
+    if not OPENAI_AVAILABLE:
+        raise RuntimeError("OpenAI package not available. Install with: pip install openai")
+    
     client = _get_client()
     mdl = (model or os.getenv("MDRAFT_MODEL") or "gpt-4o-mini").strip()
     

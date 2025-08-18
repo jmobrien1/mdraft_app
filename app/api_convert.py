@@ -1,23 +1,37 @@
+"""
+API endpoints for document conversion.
+
+This module provides RESTful endpoints for uploading documents and
+managing conversion jobs. It includes atomic upload handling with
+idempotency, progress tracking, and comprehensive error handling.
+"""
+from __future__ import annotations
+
+import hashlib
+import logging
 import os
 import tempfile
-import uuid
-from flask import Blueprint, request, jsonify, Response, current_app
-from flask_login import login_required
-from werkzeug.utils import secure_filename
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
+
+from flask import Blueprint, current_app, jsonify, request, send_file, Response
+from flask_login import current_user
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
+from werkzeug.utils import secure_filename
 
-from . import db, limiter
-from .models_conversion import Conversion
-from .security import sniff_category, size_ok
-from .auth_api import require_api_key_if_configured, rate_limit_for_convert, rate_limit_key_func
-from .utils.rate_limiting import get_upload_rate_limit_key
+from . import db
+from .models import Conversion, User
+from .services import Storage
+from .celery_tasks import enqueue_conversion_task
 from .utils.authz import allow_session_or_api_key
-from .quality import sha256_file, clean_markdown, pdf_text_fallback
-from .webhooks import deliver_webhook
-from .utils import is_file_allowed
 from .utils.csrf import csrf_exempt_for_api
+from .utils.rate_limiting import get_upload_rate_limit_key
+from .utils.serialization import serialize_conversion_status
+from .utils.validation import validate_file_upload
+from .utils.files import is_file_allowed, get_file_hash, get_file_size
+from .extensions import limiter
 
 # Public mode toggle
 PUBLIC = (os.getenv("MDRAFT_PUBLIC_MODE") or "").strip().lower() in {"1","true","yes","on","y"}
@@ -177,9 +191,6 @@ def _atomic_upload_handler(file_hash: str, filename: str, original_mime: str,
         db.session.commit()
         
         current_app.logger.info(f"Created new conversion {conv_id} and enqueued task {task_id} for SHA256 {file_hash[:8]}...")
-        
-        # Use centralized serialization to prevent JSON serialization errors
-        from app.utils.serialization import serialize_conversion_status
         
         return {
             "id": conv_id,  # Frontend expects 'id' first
@@ -597,9 +608,6 @@ def get_conversion(id):
             current_app.logger.info(f"Progress from database: {progress}")
         
         current_app.logger.info("Preparing response data...")
-        
-        # Use centralized serialization to prevent JSON serialization errors
-        from app.utils.serialization import serialize_conversion_status
         
         status_value = serialize_conversion_status(conv.status)
         current_app.logger.info(f"Status enum: {conv.status}, Status value: {status_value}")

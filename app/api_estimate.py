@@ -1,203 +1,159 @@
 """
-Estimate API for mdraft.
+API endpoints for document estimation and analysis.
 
-This module provides endpoints for estimating page count and cost
-for document processing without actually uploading or persisting files.
+This module provides endpoints for estimating document properties
+like page count, word count, and processing time before conversion.
 """
 from __future__ import annotations
 
+import logging
 import os
-import io
-from decimal import Decimal
-from typing import Any
+from typing import Any, Dict, Optional
+from datetime import datetime
 
-from flask import Blueprint, jsonify, request
-from flask_login import login_required
-from .utils import is_file_allowed
-from .utils.authz import allow_session_or_api_key
+from flask import Blueprint, request, jsonify, current_app
+from werkzeug.utils import secure_filename
 
-# Conditional import of pypdf
-try:
-    from pypdf import PdfReader
-    PYPDF_AVAILABLE = True
-except ImportError:
-    PYPDF_AVAILABLE = False
-    PdfReader = None
+from ..utils.csrf import csrf_exempt_for_api
+from ..utils.files import is_file_allowed, get_file_size
+from ..utils.validation import validate_file_upload
 
+logger = logging.getLogger(__name__)
 
-bp = Blueprint("estimate_api", __name__, url_prefix="/api")
+# Create blueprint
+bp = Blueprint("estimate", __name__, url_prefix="/api")
 
-
-def _get_file_extension(filename: str) -> str:
-    """Extract file extension from filename.
-    
-    Args:
-        filename: The filename to extract extension from
-        
-    Returns:
-        The lowercase file extension without dot, or 'unknown' if no extension
-    """
-    if not filename or '.' not in filename:
-        return "unknown"
-    
-    return filename.rsplit('.', 1)[1].lower()
-
-
-def _count_pdf_pages(file_data: bytes) -> int:
-    """Count pages in a PDF file.
-    
-    Args:
-        file_data: The PDF file data as bytes
-        
-    Returns:
-        Number of pages in the PDF
-        
-    Raises:
-        Exception: If PDF cannot be read or pypdf is not available
-    """
-    if not PYPDF_AVAILABLE:
-        raise Exception("pypdf not available for PDF processing")
-    
+def _get_pdf_page_count(file_path: str) -> Optional[int]:
+    """Get page count from PDF file with graceful fallback."""
     try:
-        pdf_file = io.BytesIO(file_data)
-        reader = PdfReader(pdf_file)
-        return len(reader.pages)
-    except Exception:
-        raise Exception("could not read pdf")
+        import pypdf
+        with open(file_path, 'rb') as file:
+            reader = pypdf.PdfReader(file)
+            return len(reader.pages)
+    except ImportError:
+        logger.debug("pypdf not available for PDF page counting")
+        return None
+    except Exception as e:
+        logger.warning(f"Failed to get PDF page count: {e}")
+        return None
 
-
-def _estimate_pages(file_data: bytes, filename: str) -> int:
-    """Estimate the number of pages in a file.
+def _estimate_processing_time(file_size: int, file_type: str, page_count: Optional[int] = None) -> Dict[str, Any]:
+    """Estimate processing time based on file properties."""
+    # Base processing time in seconds
+    base_time = 5.0
     
-    Args:
-        file_data: The file data as bytes
-        filename: The original filename
-        
-    Returns:
-        Estimated number of pages
+    # Adjust for file size (rough estimate: 1MB = 2 seconds)
+    size_factor = max(1.0, file_size / (1024 * 1024) * 2)
+    
+    # Adjust for file type complexity
+    type_factors = {
+        'application/pdf': 1.2,
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 1.0,
+        'application/msword': 1.1,
+        'text/plain': 0.5,
+    }
+    type_factor = type_factors.get(file_type, 1.0)
+    
+    # Adjust for page count if available
+    page_factor = 1.0
+    if page_count:
+        page_factor = max(1.0, page_count / 10)  # 10 pages = baseline
+    
+    estimated_time = base_time * size_factor * type_factor * page_factor
+    
+    return {
+        "estimated_seconds": round(estimated_time, 1),
+        "estimated_minutes": round(estimated_time / 60, 1),
+        "confidence": "medium" if page_count else "low"
+    }
+
+@bp.post("/estimate")
+@csrf_exempt_for_api
+def estimate_document():
     """
-    filetype = _get_file_extension(filename)
+    Estimate document properties and processing time.
     
-    if filetype == "pdf":
+    This endpoint analyzes uploaded files to provide estimates for:
+    - Page count (for PDFs)
+    - Word count (approximate)
+    - Processing time
+    - File size validation
+    
+    Returns:
+        JSON with estimation results
+    """
+    try:
+        # Validate file upload
+        validation_result = validate_file_upload(request)
+        if not validation_result["valid"]:
+            return jsonify({"error": validation_result["error"]}), 400
+        
+        file = request.files["file"]
+        filename = secure_filename(file.filename or "upload.bin")
+        
+        # Save to temporary file for analysis
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+            file.save(temp_file.name)
+            temp_path = temp_file.name
+        
         try:
-            return _count_pdf_pages(file_data)
-        except Exception as e:
-            # If PDF parsing fails or pypdf is not available, return 1 as fallback
-            if "pypdf not available" in str(e):
-                # Log that pypdf is missing but don't fail the endpoint
-                import logging
-                logging.getLogger(__name__).warning("pypdf not available for PDF page counting")
-            return 1
-    else:
-        # Non-PDF files are estimated as 1 page
-        return 1
-
-
-def _calculate_cost(pages: int) -> str:
-    """Calculate the estimated cost for processing.
-    
-    Args:
-        pages: Number of pages to process
-        
-    Returns:
-        Estimated cost as a string decimal
-    """
-    try:
-        from .config import get_config
-        config = get_config()
-        price_per_page = Decimal(config.billing.PRICE_PER_PAGE_USD)
-        total_cost = pages * price_per_page
-        # Quantize to 4 decimal places
-        return str(total_cost.quantize(Decimal('0.0001')))
-    except Exception:
-        # Return "0.0000" if calculation fails
-        return "0.0000"
-
-
-@bp.route("/estimate", methods=["POST"])
-def estimate() -> Any:
-    """Estimate pages and cost for a document without uploading.
-    
-    Returns:
-        JSON response with filetype, pages, and estimated cost
-    """
-    from flask import make_response
-    from app.auth.visitor import get_or_create_visitor_session_id
-    from flask_login import current_user
-    
-    # Ensure visitor session exists for anonymous users
-    if not getattr(current_user, "is_authenticated", False):
-        resp = make_response()
-        vid, resp = get_or_create_visitor_session_id(resp)
-    
-    if not allow_session_or_api_key():
-        return jsonify({"error": "unauthorized"}), 401
-    
-    # Validate multipart first
-    file = request.files.get("file")
-    if not file or file.filename == "":
-        return jsonify({"error":"file_required"}), 400
-    
-    # Check file size
-    file.stream.seek(0, os.SEEK_END)
-    size = file.stream.tell()
-    file.stream.seek(0)
-    if size == 0:
-        return jsonify({"error":"file_empty"}), 400
-    
-    # Validate file type
-    if not is_file_allowed(file.filename):
-        return jsonify({"error":"file_type_not_allowed"}), 400
-    
-    # Read file into memory
-    try:
-        file_data = file.read()
-    except Exception:
-        return jsonify({"error": "could not read file"}), 400
-    
-    # Check file size against soft cap
-    from .config import get_config
-    config = get_config()
-    max_size_bytes = config.get_file_size_limit("binary")  # Use binary limit as fallback
-    if len(file_data) > max_size_bytes:
-        max_mb = config.file_sizes.BINARY_MB
-        return jsonify({
-            "error": f"file too large",
-            "detail": f"Maximum file size is {max_mb}MB"
-        }), 413
-    
-    # Get file extension
-    filetype = _get_file_extension(file.filename or "unknown")
-    
-    # Estimate pages
-    try:
-        pages = _estimate_pages(file_data, file.filename or "unknown")
-    except Exception:
-        # Fallback to 1 page if estimation fails
-        pages = 1
-    
-    # Calculate cost
-    est_cost_usd = _calculate_cost(pages)
-    
-    # Create response with visitor session cookie if needed
-    if not getattr(current_user, "is_authenticated", False):
-        resp = make_response(jsonify({
-            "filetype": filetype,
-            "pages": pages,
-            "est_cost_usd": est_cost_usd
-        }))
-        vid, resp = get_or_create_visitor_session_id(resp)
-        return resp
-    else:
-        return jsonify({
-            "filetype": filetype,
-            "pages": pages,
-            "est_cost_usd": est_cost_usd
-        })
-
-# CSRF exemption for multipart uploads
-try:
-    from app.extensions import csrf
-    csrf.exempt(bp)
-except Exception:
-    pass
+            # Get file properties
+            file_size = get_file_size(temp_path)
+            file_type = file.content_type or "application/octet-stream"
+            
+            # Validate file size
+            max_size = current_app.config.get("MAX_FILE_SIZE", 50 * 1024 * 1024)  # 50MB default
+            if file_size > max_size:
+                return jsonify({
+                    "error": f"File too large. Maximum size: {max_size // (1024*1024)}MB"
+                }), 413
+            
+            # Get page count for PDFs
+            page_count = None
+            if file_type == "application/pdf":
+                page_count = _get_pdf_page_count(temp_path)
+            
+            # Estimate processing time
+            time_estimate = _estimate_processing_time(file_size, file_type, page_count)
+            
+            # Estimate word count (rough approximation)
+            word_count = None
+            try:
+                with open(temp_path, 'rb') as f:
+                    content = f.read(8192)  # Read first 8KB for estimation
+                    text_content = content.decode('utf-8', errors='ignore')
+                    word_count = len(text_content.split())
+                    # Scale up based on file size
+                    if file_size > 8192:
+                        word_count = int(word_count * (file_size / 8192))
+            except Exception as e:
+                logger.debug(f"Could not estimate word count: {e}")
+            
+            result = {
+                "filename": filename,
+                "file_size_bytes": file_size,
+                "file_size_mb": round(file_size / (1024 * 1024), 2),
+                "file_type": file_type,
+                "page_count": page_count,
+                "estimated_word_count": word_count,
+                "processing_estimate": time_estimate,
+                "status": "ready_for_conversion"
+            }
+            
+            # Add warnings if page counting failed
+            if file_type == "application/pdf" and page_count is None:
+                result["warnings"] = ["PDF page counting unavailable - install pypdf for accurate estimates"]
+            
+            return jsonify(result), 200
+            
+        finally:
+            # Clean up temporary file
+            try:
+                os.unlink(temp_path)
+            except Exception as e:
+                logger.warning(f"Failed to clean up temporary file: {e}")
+                
+    except Exception as e:
+        logger.exception("Error in document estimation")
+        return jsonify({"error": "Estimation failed"}), 500
