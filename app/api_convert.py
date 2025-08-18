@@ -126,30 +126,30 @@ def _atomic_upload_handler(file_hash: str, filename: str, original_mime: str,
             if existing_status == "COMPLETED" and existing_markdown:
                 current_app.logger.info(f"Idempotency hit: returning existing completed conversion {existing_id} for SHA256 {file_hash[:8]}...")
                 db.session.rollback()  # Release the lock
-                return {
-                    "id": existing_id,  # Frontend expects 'id' first
-                    "conversion_id": existing_id,
-                    "status": "COMPLETED",
-                    "filename": existing_filename,
-                    "duplicate_of": existing_id,
-                    "links": _links(existing_id),
-                    "note": "deduplicated",
-                    "storage_backend": storage_backend
-                }, 200
+                            return {
+                "id": existing_id,  # Frontend expects 'id' first
+                "conversion_id": existing_id,
+                "status": serialize_conversion_status("COMPLETED"),  # Use centralized serialization
+                "filename": existing_filename,
+                "duplicate_of": existing_id,
+                "links": _links(existing_id),
+                "note": "deduplicated",
+                "storage_backend": storage_backend
+            }, 200
             
             # If pending/processing conversion exists, return it
             if existing_status in ["QUEUED", "PROCESSING"]:
                 current_app.logger.info(f"Duplicate upload detected: returning existing pending conversion {existing_id} for SHA256 {file_hash[:8]}...")
                 db.session.rollback()  # Release the lock
-                return {
-                    "id": existing_id,  # Frontend expects 'id' first
-                    "conversion_id": existing_id,
-                    "status": existing_status,
-                    "filename": existing_filename,
-                    "links": _links(existing_id),
-                    "note": "duplicate_upload",
-                    "storage_backend": storage_backend
-                }, 202
+                            return {
+                "id": existing_id,  # Frontend expects 'id' first
+                "conversion_id": existing_id,
+                "status": serialize_conversion_status(existing_status),  # Use centralized serialization
+                "filename": existing_filename,
+                "links": _links(existing_id),
+                "note": "duplicate_upload",
+                "storage_backend": storage_backend
+            }, 202
         
         # No existing conversion found, create a new one
         expires_at = (datetime.now(timezone.utc) + timedelta(days=ttl_days)) if ttl_days > 0 else None
@@ -178,10 +178,13 @@ def _atomic_upload_handler(file_hash: str, filename: str, original_mime: str,
         
         current_app.logger.info(f"Created new conversion {conv_id} and enqueued task {task_id} for SHA256 {file_hash[:8]}...")
         
+        # Use centralized serialization to prevent JSON serialization errors
+        from app.utils.serialization import serialize_conversion_status
+        
         return {
             "id": conv_id,  # Frontend expects 'id' first
             "conversion_id": conv_id,
-            "status": conv.status,
+            "status": serialize_conversion_status(conv.status),  # Use centralized serialization
             "filename": filename,
             "task_id": task_id,
             "links": _links(conv_id),
@@ -205,12 +208,12 @@ def _atomic_upload_handler(file_hash: str, filename: str, original_mime: str,
             return {
                 "id": existing.id,  # Frontend expects 'id' first
                 "conversion_id": existing.id,
-                "status": existing.status,
+                "status": serialize_conversion_status(existing.status),  # Use centralized serialization
                 "filename": existing.filename,
                 "links": _links(existing.id),
                 "note": "duplicate_detected",
                 "storage_backend": storage_backend
-            }, 202 if existing.status in ["QUEUED", "PROCESSING"] else 200
+            }, 202 if serialize_conversion_status(existing.status) in ["QUEUED", "PROCESSING"] else 200
         
         # If we can't find the existing conversion, something went wrong
         raise
@@ -574,7 +577,7 @@ def get_conversion(id):
         
         # Check if this is an async task that failed
         error_details = None
-        status_value = conv.status.value if hasattr(conv.status, 'value') else str(conv.status)
+        status_value = serialize_conversion_status(conv.status)
         if status_value == "FAILED" and conv.error:
             current_app.logger.info(f"Conversion failed with error: {conv.error}")
             error_details = {
@@ -595,15 +598,17 @@ def get_conversion(id):
         
         current_app.logger.info("Preparing response data...")
         
-        # Convert enum status to string for JSON serialization
-        status_value = conv.status.value if hasattr(conv.status, 'value') else str(conv.status)
+        # Use centralized serialization to prevent JSON serialization errors
+        from app.utils.serialization import serialize_conversion_status
+        
+        status_value = serialize_conversion_status(conv.status)
         current_app.logger.info(f"Status enum: {conv.status}, Status value: {status_value}")
         
         response_data = {
             "id": conv.id,  # Frontend expects 'id' first
             "conversion_id": conv.id,
             "filename": conv.filename,
-            "status": status_value,  # Use string value instead of enum object
+            "status": status_value,  # Use centralized serialization
             "progress": progress,
             "error": error_details,
             "links": {
@@ -763,18 +768,18 @@ def list_conversions():
         for c in q.all():
             # Defensive progress handling - prevents 500s if column doesn't exist
             progress = getattr(c, "progress", None)
-            if progress is None:
-                # Guess a sane default from status if you have it
-                status_str = c.status.value.lower() if hasattr(c.status, 'value') else str(c.status).lower()
-                progress = 100 if status_str in {"done", "completed", "finished", "success"} else 0
+                    if progress is None:
+            # Guess a sane default from status if you have it
+            status_str = serialize_conversion_status(c.status).lower()
+            progress = 100 if status_str in {"done", "completed", "finished", "success"} else 0
             
-            # Convert enum status to string for JSON serialization
-            status_value = c.status.value if hasattr(c.status, 'value') else str(c.status)
+            # Use centralized serialization to prevent JSON serialization errors
+            from app.utils.serialization import serialize_conversion_status
             
             items.append({
                 "id": c.id,
                 "filename": c.filename,
-                "status": status_value,  # Use string value instead of enum object
+                "status": serialize_conversion_status(c.status),  # Use centralized serialization
                 "progress": progress,
                 "created_at": c.created_at.isoformat(),
                 "links": {

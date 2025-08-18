@@ -53,6 +53,14 @@ class ConversionStatus(Enum):
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
     CANCELLED = "CANCELLED"
+    
+    def __str__(self) -> str:
+        """Return the string value for JSON serialization."""
+        return self.value
+    
+    def __repr__(self) -> str:
+        """Return the string value for debugging."""
+        return self.value
 
     @classmethod
     def get_valid_transitions(cls, current_status: str) -> list[str]:
