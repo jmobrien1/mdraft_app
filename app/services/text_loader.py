@@ -141,7 +141,7 @@ def _extract_text_from_bytes(file_data: bytes, filename: str, logger: logging.Lo
     # Handle PDF files using pypdf
     if filename_lower.endswith('.pdf'):
         try:
-            from PyPDF2 import PdfReader
+            from pypdf import PdfReader
             pdf_stream = io.BytesIO(file_data)
             reader = PdfReader(pdf_stream)
             text = ""
@@ -152,8 +152,8 @@ def _extract_text_from_bytes(file_data: bytes, filename: str, logger: logging.Lo
             logger.info(f"Successfully extracted text from PDF: {len(text)} characters")
             return text.strip()
         except ImportError:
-            logger.warning("PyPDF2 not available for PDF extraction")
-            raise ValueError("PDF text extraction not available (PyPDF2 not installed)")
+            logger.warning("pypdf not available for PDF extraction")
+            raise ValueError("PDF text extraction not available (pypdf not installed)")
         except Exception as e:
             logger.error(f"Failed to extract text from PDF: {e}")
             raise ValueError("Failed to extract text from PDF file")
