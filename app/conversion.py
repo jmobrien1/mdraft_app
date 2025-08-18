@@ -376,30 +376,53 @@ def process_job(job_id: int, gcs_uri: str) -> str:
     try:
         # Handle different storage backends
         if gcs_uri.startswith("gs://"):
-            # GCS storage
-            from google.cloud import storage
-            
-            # Parse GCS URI
-            bucket_name = gcs_uri.split("/")[2]
-            blob_name = "/".join(gcs_uri.split("/")[3:])
-            
-            # Initialize GCS client
-            client = storage.Client()
-            bucket = client.bucket(bucket_name)
-            blob = bucket.blob(blob_name)
-            
-            # Check if file exists
-            if not blob.exists():
-                logger.error(f"File not found in GCS for job {job_id}: {gcs_uri}")
-                raise FileNotFoundError(f"File not found in GCS: {gcs_uri}")
-            
-            # Download to temporary file
-            import tempfile
-            temp_fd, input_path = tempfile.mkstemp(suffix=f"_{job.filename}")
-            with os.fdopen(temp_fd, 'wb') as f:
-                blob.download_to_file(f)
-            
-            logger.info(f"Downloaded {gcs_uri} to temporary file {input_path}")
+            # GCS storage - use the storage extension if available
+            try:
+                from flask import current_app
+                kind, handle = current_app.extensions.get("storage", (None, None))
+                
+                if kind == "gcs":
+                    # Use the configured GCS client
+                    client, bucket = handle
+                    
+                    # Parse GCS URI
+                    bucket_name = gcs_uri.split("/")[2]
+                    blob_name = "/".join(gcs_uri.split("/")[3:])
+                    
+                    # Use the configured bucket if it matches, otherwise create a new client
+                    if bucket.name == bucket_name:
+                        blob = bucket.blob(blob_name)
+                    else:
+                        # Fallback to creating a new client for different bucket
+                        from google.cloud import storage
+                        client = storage.Client()
+                        bucket = client.bucket(bucket_name)
+                        blob = bucket.blob(blob_name)
+                else:
+                    # Fallback to creating a new GCS client
+                    from google.cloud import storage
+                    client = storage.Client()
+                    bucket_name = gcs_uri.split("/")[2]
+                    blob_name = "/".join(gcs_uri.split("/")[3:])
+                    bucket = client.bucket(bucket_name)
+                    blob = bucket.blob(blob_name)
+                
+                # Check if file exists
+                if not blob.exists():
+                    logger.error(f"File not found in GCS for job {job_id}: {gcs_uri}")
+                    raise FileNotFoundError(f"File not found in GCS: {gcs_uri}")
+                
+                # Download to temporary file
+                import tempfile
+                temp_fd, input_path = tempfile.mkstemp(suffix=f"_{job.filename}")
+                with os.fdopen(temp_fd, 'wb') as f:
+                    blob.download_to_file(f)
+                
+                logger.info(f"Downloaded {gcs_uri} to temporary file {input_path}")
+                
+            except Exception as e:
+                logger.error(f"Failed to download from GCS for job {job_id}: {e}")
+                raise
         else:
             # Local storage
             if not os.path.exists(gcs_uri):

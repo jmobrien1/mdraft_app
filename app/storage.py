@@ -23,22 +23,139 @@ class LocalStorage:
         return {"backend": "local", "path": path, "name": name}
 
 def init_storage(app):
-    backend = (app.config.get("STORAGE_BACKEND") or os.getenv("STORAGE_BACKEND") or "local").lower()
-    cred = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "/etc/secrets/gcp.json")
-    if backend == "gcs" and os.path.exists(cred):
-        try:
-            from google.cloud import storage as _gcs
-            client = _gcs.Client.from_service_account_json(cred)
-            bucket = client.bucket(app.config["GCS_BUCKET"])
-            app.extensions["storage"] = ("gcs", (client, bucket))
-            app.logger.info("Storage backend: GCS (bucket: %s)", app.config["GCS_BUCKET"])
-            return
-        except Exception as e:
-            app.logger.exception("GCS init failed; falling back to local: %s", e)
-    else:
-        if backend == "gcs":
-            app.logger.error("GCS creds missing at %s; using local storage", cred)
+    """Initialize storage backend with robust fallback to local storage.
     
+    This function:
+    1. Checks if STORAGE_BACKEND=gcs and GOOGLE_APPLICATION_CREDENTIALS exists
+    2. If GCS credentials are available, initializes GCS client and bucket
+    3. If GCS is not available or fails, falls back to LocalStorage
+    4. Stores the backend info in app.extensions["storage"]
+    5. Logs which backend was selected at startup
+    """
+    backend = (app.config.get("STORAGE_BACKEND") or os.getenv("STORAGE_BACKEND") or "local").lower()
+    
+    # Check for GCS configuration
+    if backend == "gcs":
+        # Check for GCS credentials
+        cred_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "/etc/secrets/gcp.json")
+        
+        if not os.path.exists(cred_path):
+            app.logger.warning(f"GCS credentials not found at {cred_path}; falling back to local storage")
+        else:
+            # Check for GCS bucket configuration
+            bucket_name = app.config.get("GCS_BUCKET") or os.getenv("GCS_BUCKET_NAME")
+            if not bucket_name:
+                app.logger.warning("GCS_BUCKET not configured; falling back to local storage")
+            else:
+                try:
+                    from google.cloud import storage as _gcs
+                    client = _gcs.Client.from_service_account_json(cred_path)
+                    bucket = client.bucket(bucket_name)
+                    
+                    # Test the connection
+                    bucket.reload()
+                    
+                    app.extensions["storage"] = ("gcs", (client, bucket))
+                    app.logger.info(f"Storage backend: GCS (bucket: {bucket_name})")
+                    return
+                except Exception as e:
+                    app.logger.exception(f"GCS initialization failed; falling back to local storage: {e}")
+    
+    # Fallback to local storage
     local_base = os.getenv("UPLOAD_DIR", "/tmp/uploads")
     app.extensions["storage"] = ("local", LocalStorage(base=local_base))
-    app.logger.info("Storage backend: LOCAL (base: %s)", local_base)
+    app.logger.info(f"Storage backend: LOCAL (base: {local_base})")
+
+# Legacy functions for backward compatibility
+def upload_stream_to_gcs(file_stream, filename: str, content_type: str = None) -> str:
+    """Legacy function for uploading file stream to GCS.
+    
+    This function is maintained for backward compatibility with existing code.
+    It uses the new storage abstraction internally.
+    """
+    from flask import current_app
+    
+    # Get storage backend
+    kind, handle = current_app.extensions.get("storage", ("local", None))
+    
+    if kind == "gcs":
+        # Use GCS storage
+        client, bucket = handle
+        blob_name = secure_filename(filename)
+        blob = bucket.blob(f"uploads/{blob_name}")
+        blob.upload_from_file(file_stream, rewind=True)
+        return f"gs://{bucket.name}/{blob.name}"
+    else:
+        # Use local storage
+        source_ref = handle.save(file_stream)
+        return source_ref["path"]
+
+def generate_download_url(local_path: str, expires_in: int = 900) -> str:
+    """Generate a temporary download URL for a file stored locally.
+    
+    This is a legacy function maintained for backward compatibility.
+    """
+    import time
+    expiry = int(time.time()) + expires_in
+    filename = os.path.basename(local_path)
+    return f"/download/{filename}?expires={expiry}"
+
+def generate_signed_url(gcs_uri: str, expires_in: int = 900) -> str:
+    """Generate a signed URL for GCS file download.
+    
+    This is a legacy function maintained for backward compatibility.
+    """
+    from flask import current_app
+    
+    # Get storage backend
+    kind, handle = current_app.extensions.get("storage", ("local", None))
+    
+    if kind == "gcs" and gcs_uri.startswith("gs://"):
+        # Use GCS signed URL
+        client, bucket = handle
+        bucket_name = gcs_uri.split("/")[2]
+        blob_name = "/".join(gcs_uri.split("/")[3:])
+        
+        if bucket.name == bucket_name:
+            blob = bucket.blob(blob_name)
+            return blob.generate_signed_url(expiration=expires_in)
+        else:
+            # Different bucket, create new client
+            from google.cloud import storage
+            client = storage.Client()
+            bucket = client.bucket(bucket_name)
+            blob = bucket.blob(blob_name)
+            return blob.generate_signed_url(expiration=expires_in)
+    else:
+        # Fallback to local URL
+        return generate_download_url(gcs_uri, expires_in)
+
+def generate_v4_signed_url(gcs_uri: str, expires_in: int = 900) -> str:
+    """Generate a v4 signed URL for GCS file download.
+    
+    This is a legacy function maintained for backward compatibility.
+    """
+    from flask import current_app
+    
+    # Get storage backend
+    kind, handle = current_app.extensions.get("storage", ("local", None))
+    
+    if kind == "gcs" and gcs_uri.startswith("gs://"):
+        # Use GCS v4 signed URL
+        client, bucket = handle
+        bucket_name = gcs_uri.split("/")[2]
+        blob_name = "/".join(gcs_uri.split("/")[3:])
+        
+        if bucket.name == bucket_name:
+            blob = bucket.blob(blob_name)
+            return blob.generate_signed_url(expiration=expires_in, version="v4")
+        else:
+            # Different bucket, create new client
+            from google.cloud import storage
+            client = storage.Client()
+            bucket = client.bucket(bucket_name)
+            blob = bucket.blob(blob_name)
+            return blob.generate_signed_url(expiration=expires_in, version="v4")
+    else:
+        # Fallback to local URL
+        return generate_download_url(gcs_uri, expires_in)

@@ -409,7 +409,8 @@ def _legacy_upload_handler(tmp_path: str, filename: str, file_hash: str,
             "filename": existing.filename,
             "duplicate_of": existing.id,
             "links": _links(existing.id),
-            "note": "deduplicated"
+            "note": "deduplicated",
+            "storage_backend": "unknown"  # Legacy handler doesn't know storage backend
         }), 200
 
     # Check for existing pending/processing conversion with same SHA256
@@ -424,19 +425,36 @@ def _legacy_upload_handler(tmp_path: str, filename: str, file_hash: str,
             "status": existing_pending.status,
             "filename": existing_pending.filename,
             "links": _links(existing_pending.id),
-            "note": "duplicate_upload"
+            "note": "duplicate_upload",
+            "storage_backend": "unknown"  # Legacy handler doesn't know storage backend
         }), 202
 
-    # Upload to GCS for async processing
+    # Upload file using storage with fallback
     try:
-        from google.cloud import storage
-        bucket_name = os.environ["GCS_BUCKET_NAME"]
-        client = storage.Client()
-        bucket = client.bucket(bucket_name)
-        object_key = f"uploads/{uuid.uuid4()}-{filename}"
-        blob = bucket.blob(object_key)
-        blob.upload_from_filename(tmp_path)
-        gcs_uri = f"gs://{bucket_name}/{object_key}"
+        from flask import current_app
+        
+        # Get storage backend
+        kind, handle = current_app.extensions.get("storage", ("local", None))
+        
+        if kind == "gcs":
+            from werkzeug.utils import secure_filename
+            blob_name = f"uploads/{uuid.uuid4()}-{secure_filename(filename)}"
+            client, bucket = handle
+            blob = bucket.blob(blob_name)
+            blob.upload_from_filename(tmp_path)
+            gcs_uri = f"gs://{bucket.name}/{blob.name}"
+        else:
+            # For local storage, we need to save the file and get the path
+            with open(tmp_path, 'rb') as f:
+                from io import BytesIO
+                file_storage = type('FileStorage', (), {
+                    'filename': filename,
+                    'stream': BytesIO(f.read()),
+                    'save': lambda path: None
+                })()
+                file_storage.stream.seek(0)
+                source_ref = handle.save(file_storage)
+                gcs_uri = source_ref["path"]
 
         # Create conversion record
         ttl_days = int(os.getenv("RETENTION_DAYS", "30"))
@@ -469,6 +487,7 @@ def _legacy_upload_handler(tmp_path: str, filename: str, file_hash: str,
             "filename": filename,
             "task_id": task_id,
             "links": _links(conv_id),
+            "storage_backend": kind
         }), 202
 
     except Exception as e:

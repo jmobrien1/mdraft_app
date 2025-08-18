@@ -110,6 +110,11 @@ def create_app() -> Flask:
             app.config["WTF_CSRF_ENABLED"] = True
             app.config["WTF_CSRF_TIME_LIMIT"] = 3600  # 1 hour
             
+            # Rate limiter configuration
+            uri = os.getenv("FLASK_LIMITER_STORAGE_URI")
+            if uri:
+                app.config["RATELIMIT_STORAGE_URI"] = uri
+            
             logger.info("Basic configuration loaded")
         except Exception as e:
             logger.error(f"Configuration loading failed: {e}")
@@ -124,7 +129,35 @@ def create_app() -> Flask:
             
             app.config["SQLALCHEMY_DATABASE_URI"] = db_url
             app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-            logger.info("Database configuration loaded")
+            
+            # Harden SQLAlchemy engine options to reduce TLS/connection blips
+            engine_options = {
+                "pool_pre_ping": True,
+                "pool_recycle": 300,           # seconds
+                "pool_size": 5,
+                "max_overflow": 10,
+            }
+            
+            # Add database-specific connection arguments
+            if db_url.startswith("postgresql://") or db_url.startswith("postgres://"):
+                # PostgreSQL-specific options for TLS and connection stability
+                engine_options["connect_args"] = {
+                    "sslmode": "require",      # ensure TLS
+                    "keepalives": 1,
+                    "keepalives_idle": 30,
+                    "keepalives_interval": 10,
+                    "keepalives_count": 5,
+                }
+            elif db_url.startswith("mysql://"):
+                # MySQL-specific options
+                engine_options["connect_args"] = {
+                    "ssl": {"ssl_mode": "REQUIRED"},
+                    "autocommit": False,
+                }
+            
+            app.config["SQLALCHEMY_ENGINE_OPTIONS"] = engine_options
+            
+            logger.info("Database configuration loaded with hardened engine options")
         except Exception as e:
             logger.error(f"Database configuration failed: {e}")
             raise
