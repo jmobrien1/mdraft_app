@@ -519,15 +519,29 @@ def _legacy_upload_handler(tmp_path: str, filename: str, file_hash: str,
 
         current_app.logger.info(f"Enqueued conversion task {task_id} for conversion {conv_id} (SHA256: {file_hash[:8]}...)")
 
-        return jsonify({
-            "id": conv_id,  # Frontend expects 'id' first
-            "conversion_id": conv_id,
-            "status": conv.status,
-            "filename": filename,
-            "task_id": task_id,
-            "links": _links(conv_id),
-            "storage_backend": kind
-        }), 202
+        current_app.logger.info("=== Preparing response ===")
+        try:
+            links = _links(conv_id)
+            current_app.logger.info(f"Generated links: {links}")
+            
+            response_data = {
+                "id": conv_id,  # Frontend expects 'id' first
+                "conversion_id": conv_id,
+                "status": conv.status,
+                "filename": filename,
+                "task_id": task_id,
+                "links": links,
+                "storage_backend": kind
+            }
+            current_app.logger.info(f"Response data prepared: {response_data}")
+            
+            response = jsonify(response_data)
+            current_app.logger.info("=== Response created successfully ===")
+            return response, 202
+            
+        except Exception as response_error:
+            current_app.logger.error(f"Error creating response: {type(response_error).__name__}: {str(response_error)}")
+            raise
 
     except Exception as e:
         current_app.logger.exception("Upload failed: %s", e)
