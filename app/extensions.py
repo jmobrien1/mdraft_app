@@ -34,41 +34,21 @@ limiter = Limiter(
 # Global flag to track if limiter is properly initialized
 _limiter_initialized = False
 
-# Flask-Login configuration
+# app/extensions.py
+from flask_login import LoginManager, AnonymousUserMixin
+
 login_manager = LoginManager()
-login_manager.login_view = "auth.login"
+login_manager.login_view = "auth.login"      # change if your login route differs
 login_manager.session_protection = "strong"
 
+class _Anonymous(AnonymousUserMixin):
+    # Keep templates from blowing up when current_user is anonymous
+    @property
+    def name(self): return None
+    @property
+    def is_admin(self): return False
 
-class AnonymousUser(AnonymousUserMixin):
-    """Custom anonymous user class with safe defaults for templates."""
-    
-    @property
-    def name(self) -> str | None:
-        """Return None for anonymous users."""
-        return None
-    
-    @property
-    def is_admin(self) -> bool:
-        """Anonymous users are never admin."""
-        return False
-    
-    @property
-    def email(self) -> str | None:
-        """Return None for anonymous users."""
-        return None
-    
-    @property
-    def id(self) -> None:
-        """Return None for anonymous users."""
-        return None
-    
-    def __repr__(self) -> str:
-        return "<AnonymousUser>"
-
-
-# Set the anonymous user class
-login_manager.anonymous_user = AnonymousUser
+login_manager.anonymous_user = _Anonymous
 
 
 def init_extensions(app):
