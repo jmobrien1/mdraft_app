@@ -355,6 +355,11 @@ def api_upload():
             
             # Get storage backend
             kind, handle = current_app.extensions.get("storage", ("local", None))
+            current_app.logger.info(f"Storage backend: {kind}, handle: {type(handle).__name__ if handle else 'None'}")
+            
+            if not handle:
+                current_app.logger.error("Storage backend not initialized properly")
+                return jsonify({"error": "server_error", "detail": "Storage backend not initialized"}), 500
             
             if kind == "gcs":
                 from werkzeug.utils import secure_filename
@@ -383,7 +388,9 @@ def api_upload():
         except Exception as e:
             current_app.logger.exception("Upload failed: %s", e)
             current_app.logger.error(f"Upload error details: {type(e).__name__}: {str(e)}")
-            return jsonify({"error": "server_error", "detail": str(e)[:200]}), 500
+            # Include more detailed error information for debugging
+            error_detail = f"{type(e).__name__}: {str(e)}"
+            return jsonify({"error": "server_error", "detail": error_detail[:200]}), 500
 
     finally:
         try: 
