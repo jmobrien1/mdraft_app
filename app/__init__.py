@@ -176,6 +176,34 @@ def create_app() -> Flask:
         # Rate limiting is now handled by init_extensions()
         logger.info("Rate limiting configured during extension initialization")
         
+        # Log critical dependency versions for build reliability
+        logger.info("=== Dependency Version Check ===")
+        try:
+            import pypdf
+            logger.info("pypdf %s", getattr(pypdf, "__version__", "unknown"))
+        except Exception as e:
+            logger.warning("pypdf not importable: %s", e)
+        
+        try:
+            import openai
+            logger.info("openai %s", getattr(openai, "__version__", "unknown"))
+        except Exception as e:
+            logger.warning("openai not importable: %s", e)
+        
+        try:
+            from google.cloud import storage
+            logger.info("google-cloud-storage available")
+        except Exception as e:
+            logger.warning("google-cloud-storage not importable: %s", e)
+        
+        try:
+            import stripe
+            logger.info("stripe %s", getattr(stripe, "__version__", "unknown"))
+        except Exception as e:
+            logger.warning("stripe not importable: %s", e)
+        
+        logger.info("=== End Dependency Version Check ===")
+        
         # Register all blueprints using centralized registration
         from .blueprints import register_blueprints
         blueprint_errors = register_blueprints(app)
