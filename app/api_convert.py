@@ -462,12 +462,19 @@ def get_conversion(id):
             "readable_message": _get_readable_error_message(conv.error)
         }
     
+    # Defensive progress handling - prevents 500s if column doesn't exist
+    progress = getattr(conv, "progress", None)
+    if progress is None:
+        # Guess a sane default from status if you have it
+        status = getattr(conv, "status", "").lower()
+        progress = 100 if status in {"done", "completed", "finished", "success"} else 0
+    
     return jsonify({
         "id": conv.id,  # Frontend expects 'id' first
         "conversion_id": conv.id,
         "filename": conv.filename,
         "status": conv.status,
-        "progress": conv.progress,
+        "progress": progress,
         "error": error_details,
         "links": {
             "markdown": f"/api/conversions/{conv.id}/markdown",
@@ -572,18 +579,27 @@ def list_conversions():
             resp.headers["X-Offset"] = str(offset)
             return resp
 
-        items = [{
-            "id": c.id,
-            "filename": c.filename,
-            "status": c.status,
-            "progress": c.progress,
-            "created_at": c.created_at.isoformat(),
-            "links": {
-                "self": f"/api/conversions/{c.id}",
-                "markdown": f"/api/conversions/{c.id}/markdown",
-                "view": f"/v/{c.id}",
-            },
-        } for c in q.all()]
+        items = []
+        for c in q.all():
+            # Defensive progress handling - prevents 500s if column doesn't exist
+            progress = getattr(c, "progress", None)
+            if progress is None:
+                # Guess a sane default from status if you have it
+                status = getattr(c, "status", "").lower()
+                progress = 100 if status in {"done", "completed", "finished", "success"} else 0
+            
+            items.append({
+                "id": c.id,
+                "filename": c.filename,
+                "status": c.status,
+                "progress": progress,
+                "created_at": c.created_at.isoformat(),
+                "links": {
+                    "self": f"/api/conversions/{c.id}",
+                    "markdown": f"/api/conversions/{c.id}/markdown",
+                    "view": f"/v/{c.id}",
+                },
+            })
 
         resp = make_response(jsonify(items), 200)
         resp.headers["X-Limit"] = str(limit)

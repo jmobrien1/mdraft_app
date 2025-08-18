@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 from enum import Enum
-from sqlalchemy import UniqueConstraint, Index, Enum as SQLAlchemyEnum
+from sqlalchemy import UniqueConstraint, Index, Enum as SQLAlchemyEnum, text
 from sqlalchemy.orm import selectinload, joinedload
 from . import db
 from .models import ConversionStatus
@@ -12,7 +12,7 @@ class Conversion(db.Model):
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     filename = db.Column(db.String(255), nullable=False)
     status = db.Column(SQLAlchemyEnum(ConversionStatus), nullable=False, default=ConversionStatus.QUEUED)
-    progress = db.Column(db.Integer, nullable=False, server_default="0")  # Progress from 0-100
+    progress = db.Column(db.Integer, nullable=False, server_default=text("0"))  # Progress from 0-100
     markdown = db.Column(db.Text, nullable=True)
     error = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
