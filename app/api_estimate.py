@@ -13,9 +13,16 @@ from typing import Any
 
 from flask import Blueprint, jsonify, request
 from flask_login import login_required
-from pypdf import PdfReader
 from .utils import is_file_allowed
 from .utils.authz import allow_session_or_api_key
+
+# Conditional import of pypdf
+try:
+    from pypdf import PdfReader
+    PYPDF_AVAILABLE = True
+except ImportError:
+    PYPDF_AVAILABLE = False
+    PdfReader = None
 
 
 bp = Blueprint("estimate_api", __name__, url_prefix="/api")
@@ -46,8 +53,11 @@ def _count_pdf_pages(file_data: bytes) -> int:
         Number of pages in the PDF
         
     Raises:
-        Exception: If PDF cannot be read
+        Exception: If PDF cannot be read or pypdf is not available
     """
+    if not PYPDF_AVAILABLE:
+        raise Exception("pypdf not available for PDF processing")
+    
     try:
         pdf_file = io.BytesIO(file_data)
         reader = PdfReader(pdf_file)
@@ -71,8 +81,12 @@ def _estimate_pages(file_data: bytes, filename: str) -> int:
     if filetype == "pdf":
         try:
             return _count_pdf_pages(file_data)
-        except Exception:
-            # If PDF parsing fails, return 1 as fallback
+        except Exception as e:
+            # If PDF parsing fails or pypdf is not available, return 1 as fallback
+            if "pypdf not available" in str(e):
+                # Log that pypdf is missing but don't fail the endpoint
+                import logging
+                logging.getLogger(__name__).warning("pypdf not available for PDF page counting")
             return 1
     else:
         # Non-PDF files are estimated as 1 page
