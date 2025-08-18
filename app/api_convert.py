@@ -321,8 +321,15 @@ def api_upload():
             return jsonify(error_response), 400
 
     current_app.logger.info("Processing filename and callback URL...")
-    filename = secure_filename(file.filename or "upload.bin")
-    current_app.logger.info(f"Secure filename: {filename}")
+    current_app.logger.info(f"Original filename: {file.filename}")
+    current_app.logger.info(f"File object type: {type(file)}")
+    
+    try:
+        filename = secure_filename(file.filename or "upload.bin")
+        current_app.logger.info(f"Secure filename: {filename}")
+    except Exception as e:
+        current_app.logger.error(f"Error in secure_filename: {type(e).__name__}: {str(e)}")
+        raise
     
     callback_url = (
         request.form.get("callback_url")
