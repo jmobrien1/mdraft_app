@@ -14,7 +14,7 @@ class LocalStorage:
     def __init__(self, base="/tmp/uploads"):
         self.base = base
         os.makedirs(self.base, exist_ok=True)
-    def save(self, file_storage, subdir=""):
+    def save(self, file_storage, subdir="uploads"):
         d = os.path.join(self.base, subdir) if subdir else self.base
         os.makedirs(d, exist_ok=True)
         name = secure_filename(file_storage.filename or "upload.bin")
@@ -31,11 +31,14 @@ def init_storage(app):
             client = _gcs.Client.from_service_account_json(cred)
             bucket = client.bucket(app.config["GCS_BUCKET"])
             app.extensions["storage"] = ("gcs", (client, bucket))
-            app.logger.info("GCS storage ready: %s", app.config["GCS_BUCKET"])
+            app.logger.info("Storage backend: GCS (bucket: %s)", app.config["GCS_BUCKET"])
             return
         except Exception as e:
             app.logger.exception("GCS init failed; falling back to local: %s", e)
     else:
         if backend == "gcs":
             app.logger.error("GCS creds missing at %s; using local storage", cred)
-    app.extensions["storage"] = ("local", LocalStorage(base=os.getenv("UPLOAD_DIR", "/tmp/uploads")))
+    
+    local_base = os.getenv("UPLOAD_DIR", "/tmp/uploads")
+    app.extensions["storage"] = ("local", LocalStorage(base=local_base))
+    app.logger.info("Storage backend: LOCAL (base: %s)", local_base)

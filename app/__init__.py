@@ -94,7 +94,7 @@ def create_app() -> Flask:
         logger.info("Flask instance created")
         
         # Runtime check for key modules
-        for _mod in ("pypdf", "google.cloud.storage"):
+        for _mod in ("pypdf", "google.cloud.storage", "openai", "stripe"):
             try:
                 __import__(_mod.replace(".", "_") if _mod=="google.cloud.storage" else _mod)
                 app.logger.info("%s: OK", _mod)

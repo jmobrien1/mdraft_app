@@ -65,7 +65,7 @@ def _get_owner_fields():
 
 def _atomic_upload_handler(file_hash: str, filename: str, original_mime: str, 
                           original_size: int, gcs_uri: str, owner_fields: dict, 
-                          ttl_days: int, callback_url: str = None):
+                          ttl_days: int, callback_url: str = None, storage_backend: str = "unknown"):
     """
     Atomic upload handler that ensures idempotency under concurrency.
     
@@ -128,7 +128,8 @@ def _atomic_upload_handler(file_hash: str, filename: str, original_mime: str,
                     "filename": existing_filename,
                     "duplicate_of": existing_id,
                     "links": _links(existing_id),
-                    "note": "deduplicated"
+                    "note": "deduplicated",
+                    "storage_backend": storage_backend
                 }, 200
             
             # If pending/processing conversion exists, return it
@@ -141,7 +142,8 @@ def _atomic_upload_handler(file_hash: str, filename: str, original_mime: str,
                     "status": existing_status,
                     "filename": existing_filename,
                     "links": _links(existing_id),
-                    "note": "duplicate_upload"
+                    "note": "duplicate_upload",
+                    "storage_backend": storage_backend
                 }, 202
         
         # No existing conversion found, create a new one
@@ -178,6 +180,7 @@ def _atomic_upload_handler(file_hash: str, filename: str, original_mime: str,
             "filename": filename,
             "task_id": task_id,
             "links": _links(conv_id),
+            "storage_backend": storage_backend
         }, 202
         
     except IntegrityError as e:
@@ -200,7 +203,8 @@ def _atomic_upload_handler(file_hash: str, filename: str, original_mime: str,
                 "status": existing.status,
                 "filename": existing.filename,
                 "links": _links(existing.id),
-                "note": "duplicate_detected"
+                "note": "duplicate_detected",
+                "storage_backend": storage_backend
             }, 202 if existing.status in ["QUEUED", "PROCESSING"] else 200
         
         # If we can't find the existing conversion, something went wrong
@@ -266,6 +270,19 @@ def api_upload():
     file = request.files.get("file")
     if not file or file.filename == "":
         return jsonify({"error":"file_required"}), 400
+    
+    # Config-driven allowlists for file types
+    ALLOWED_EXTS = set((current_app.config.get("ALLOWED_EXTENSIONS") or "pdf,docx,txt").split(","))
+    ALLOWED_MIMES = set((current_app.config.get("ALLOWED_MIME_TYPES") or "application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain").split(","))
+    
+    # Validate file type by extension and MIME type
+    ext_ok = file.filename and file.filename.rsplit(".",1)[-1].lower() in ALLOWED_EXTS
+    mime = file.mimetype or ""
+    mime_ok = (not ALLOWED_MIMES) or (mime in ALLOWED_MIMES)
+    if not ext_ok or not mime_ok:
+        return jsonify(error="file_type_not_allowed",
+                       allowed_extensions=sorted(ALLOWED_EXTS),
+                       detected_mime=mime), 400
     
     # Check file size
     file.stream.seek(0, os.SEEK_END)
@@ -360,7 +377,7 @@ def api_upload():
             # Use atomic upload handler
             return _atomic_upload_handler(
                 file_hash, filename, original_mime, original_size,
-                gcs_uri, owner_fields, ttl_days, callback_url
+                gcs_uri, owner_fields, ttl_days, callback_url, kind
             )
 
         except Exception as e:
