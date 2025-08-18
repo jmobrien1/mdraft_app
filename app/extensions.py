@@ -34,9 +34,6 @@ limiter = Limiter(
 # Global flag to track if limiter is properly initialized
 _limiter_initialized = False
 
-# app/extensions.py
-from flask_login import LoginManager, AnonymousUserMixin
-
 login_manager = LoginManager()
 login_manager.login_view = "auth.login"      # change if your login route differs
 login_manager.session_protection = "strong"
