@@ -126,30 +126,30 @@ def _atomic_upload_handler(file_hash: str, filename: str, original_mime: str,
             if existing_status == "COMPLETED" and existing_markdown:
                 current_app.logger.info(f"Idempotency hit: returning existing completed conversion {existing_id} for SHA256 {file_hash[:8]}...")
                 db.session.rollback()  # Release the lock
-                            return {
-                "id": existing_id,  # Frontend expects 'id' first
-                "conversion_id": existing_id,
-                "status": serialize_conversion_status("COMPLETED"),  # Use centralized serialization
-                "filename": existing_filename,
-                "duplicate_of": existing_id,
-                "links": _links(existing_id),
-                "note": "deduplicated",
-                "storage_backend": storage_backend
-            }, 200
+                return {
+                    "id": existing_id,  # Frontend expects 'id' first
+                    "conversion_id": existing_id,
+                    "status": serialize_conversion_status("COMPLETED"),  # Use centralized serialization
+                    "filename": existing_filename,
+                    "duplicate_of": existing_id,
+                    "links": _links(existing_id),
+                    "note": "deduplicated",
+                    "storage_backend": storage_backend
+                }, 200
             
             # If pending/processing conversion exists, return it
             if existing_status in ["QUEUED", "PROCESSING"]:
                 current_app.logger.info(f"Duplicate upload detected: returning existing pending conversion {existing_id} for SHA256 {file_hash[:8]}...")
                 db.session.rollback()  # Release the lock
-                            return {
-                "id": existing_id,  # Frontend expects 'id' first
-                "conversion_id": existing_id,
-                "status": serialize_conversion_status(existing_status),  # Use centralized serialization
-                "filename": existing_filename,
-                "links": _links(existing_id),
-                "note": "duplicate_upload",
-                "storage_backend": storage_backend
-            }, 202
+                return {
+                    "id": existing_id,  # Frontend expects 'id' first
+                    "conversion_id": existing_id,
+                    "status": serialize_conversion_status(existing_status),  # Use centralized serialization
+                    "filename": existing_filename,
+                    "links": _links(existing_id),
+                    "note": "duplicate_upload",
+                    "storage_backend": storage_backend
+                }, 202
         
         # No existing conversion found, create a new one
         expires_at = (datetime.now(timezone.utc) + timedelta(days=ttl_days)) if ttl_days > 0 else None
@@ -768,10 +768,10 @@ def list_conversions():
         for c in q.all():
             # Defensive progress handling - prevents 500s if column doesn't exist
             progress = getattr(c, "progress", None)
-                    if progress is None:
-            # Guess a sane default from status if you have it
-            status_str = serialize_conversion_status(c.status).lower()
-            progress = 100 if status_str in {"done", "completed", "finished", "success"} else 0
+            if progress is None:
+                # Guess a sane default from status if you have it
+                status_str = serialize_conversion_status(c.status).lower()
+                progress = 100 if status_str in {"done", "completed", "finished", "success"} else 0
             
             # Use centralized serialization to prevent JSON serialization errors
             from app.utils.serialization import serialize_conversion_status
