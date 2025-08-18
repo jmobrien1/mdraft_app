@@ -47,6 +47,17 @@ class _Anonymous(AnonymousUserMixin):
 
 login_manager.anonymous_user = _Anonymous
 
+@login_manager.unauthorized_handler
+def _api_unauthorized():
+    """Handle unauthorized access - return JSON for API calls, redirect for web."""
+    from flask import request, jsonify, redirect, url_for
+    
+    # if it's an API call, don't redirect — return 401 JSON
+    if request.path.startswith("/api/"):
+        return jsonify(error="unauthorized"), 401
+    # otherwise do the normal redirect
+    return redirect(url_for("auth.login"))
+
 
 def init_extensions(app):
     """Initialize all Flask extensions with the application."""

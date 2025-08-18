@@ -252,6 +252,14 @@ def api_upload():
     The endpoint is idempotent - multiple identical uploads will only
     create one conversion job, even under high concurrency.
     """
+    import os
+    from flask_login import current_user
+    
+    # Check if login is required for conversion
+    REQUIRE_LOGIN_CONVERT = os.getenv("CONVERT_REQUIRES_LOGIN", "0") in {"1", "true", "True"}
+    
+    if REQUIRE_LOGIN_CONVERT and not current_user.is_authenticated:
+        return jsonify(error="unauthorized"), 401
     if not allow_session_or_api_key():
         return jsonify({"error": "unauthorized"}), 401
     
@@ -520,9 +528,16 @@ def api_convert():
     This endpoint provides the same functionality as /api/upload but
     uses the /api/convert path that the UI expects.
     """
+    import os
     from flask import make_response
     from app.auth.visitor import get_or_create_visitor_session_id
     from flask_login import current_user
+    
+    # Check if login is required for conversion
+    REQUIRE_LOGIN_CONVERT = os.getenv("CONVERT_REQUIRES_LOGIN", "0") in {"1", "true", "True"}
+    
+    if REQUIRE_LOGIN_CONVERT and not current_user.is_authenticated:
+        return jsonify(error="unauthorized"), 401
     
     # Ensure visitor session exists for anonymous users
     if not getattr(current_user, "is_authenticated", False):
