@@ -58,14 +58,31 @@ def init_extensions(app):
     bcrypt.init_app(app)
     csrf.init_app(app)
     
-    # Initialize rate limiting
+    # Initialize rate limiting with Redis storage configuration
     global _limiter_initialized
     try:
+        # Configure the global limiter instance with Redis storage
+        import os
+        storage_uri = os.getenv("FLASK_LIMITER_STORAGE_URI", "memory://")
+        if storage_uri and storage_uri != "memory://":
+            limiter.storage_uri = storage_uri
+            app.logger.info(f"Flask-Limiter configured with Redis storage: {storage_uri}")
+        else:
+            app.logger.warning("Flask-Limiter using in-memory storage (set FLASK_LIMITER_STORAGE_URI for Redis)")
+        
+        # Set default limits from environment
+        default_limit = os.getenv("GLOBAL_RATE_LIMIT", "120 per minute")
+        limiter.default_limits = [default_limit]
+        
         limiter.init_app(app)
         _limiter_initialized = True
-    except Exception:
-        # Rate limiting will be disabled if initialization fails
+        app.logger.info("Flask-Limiter initialized successfully")
+    except Exception as e:
+        # Don't reassign limiter - just disable it by setting storage to memory
+        limiter.storage_uri = "memory://"
+        limiter.default_limits = []  # No limits when disabled
         _limiter_initialized = False
+        app.logger.warning(f"Flask-Limiter initialization failed, using memory storage: {e}")
     
     # Initialize session (will be configured in create_app)
     # Session initialization is handled separately due to Redis dependency
