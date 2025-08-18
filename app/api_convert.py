@@ -561,35 +561,54 @@ def _legacy_upload_handler(tmp_path: str, filename: str, file_hash: str,
 @bp.get("/conversions/<id>")
 @csrf_exempt_for_api
 def get_conversion(id):
-    conv = Conversion.query.get_or_404(id)
+    current_app.logger.info(f"=== get_conversion() called with id: {id} ===")
     
-    # Check if this is an async task that failed
-    error_details = None
-    if conv.status == "FAILED" and conv.error:
-        error_details = {
-            "error": conv.error,
-            "readable_message": _get_readable_error_message(conv.error)
+    try:
+        conv = Conversion.query.get_or_404(id)
+        current_app.logger.info(f"Found conversion: {conv.id}, status: {conv.status}")
+        
+        # Check if this is an async task that failed
+        error_details = None
+        if conv.status == "FAILED" and conv.error:
+            current_app.logger.info(f"Conversion failed with error: {conv.error}")
+            error_details = {
+                "error": conv.error,
+                "readable_message": _get_readable_error_message(conv.error)
+            }
+        
+        # Defensive progress handling - prevents 500s if column doesn't exist
+        current_app.logger.info("Getting progress...")
+        progress = getattr(conv, "progress", None)
+        if progress is None:
+            # Guess a sane default from status if you have it
+            status = getattr(conv, "status", "").lower()
+            progress = 100 if status in {"done", "completed", "finished", "success"} else 0
+            current_app.logger.info(f"Progress was None, using default: {progress} based on status: {status}")
+        else:
+            current_app.logger.info(f"Progress from database: {progress}")
+        
+        current_app.logger.info("Preparing response data...")
+        response_data = {
+            "id": conv.id,  # Frontend expects 'id' first
+            "conversion_id": conv.id,
+            "filename": conv.filename,
+            "status": conv.status,
+            "progress": progress,
+            "error": error_details,
+            "links": {
+                "markdown": f"/api/conversions/{conv.id}/markdown",
+                "view": f"/v/{conv.id}",
+            }
         }
-    
-    # Defensive progress handling - prevents 500s if column doesn't exist
-    progress = getattr(conv, "progress", None)
-    if progress is None:
-        # Guess a sane default from status if you have it
-        status = getattr(conv, "status", "").lower()
-        progress = 100 if status in {"done", "completed", "finished", "success"} else 0
-    
-    return jsonify({
-        "id": conv.id,  # Frontend expects 'id' first
-        "conversion_id": conv.id,
-        "filename": conv.filename,
-        "status": conv.status,
-        "progress": progress,
-        "error": error_details,
-        "links": {
-            "markdown": f"/api/conversions/{conv.id}/markdown",
-            "view": f"/v/{conv.id}",
-        }
-    })
+        current_app.logger.info(f"Response data prepared: {response_data}")
+        
+        response = jsonify(response_data)
+        current_app.logger.info("=== get_conversion() returning successfully ===")
+        return response
+        
+    except Exception as e:
+        current_app.logger.error(f"Error in get_conversion: {type(e).__name__}: {str(e)}")
+        raise
 
 
 def _get_readable_error_message(error_text: str) -> str:
