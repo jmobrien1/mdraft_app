@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+from datetime import datetime
 from typing import Dict, Any, Optional
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 
@@ -299,17 +300,40 @@ def health() -> tuple[Dict[str, Any], int]:
         return jsonify({"status": "database_error", "error": str(e)}), 503
 
 
-@bp.get("/health/simple")
-def health_simple() -> tuple[Dict[str, Any], int]:
-    """Simple health check endpoint for Render.
+@bp.route("/health")
+@bp.route("/health/simple")
+def health_simple():
+    """Simple health check for startup verification."""
+    try:
+        # Test database
+        db.session.execute(text("SELECT 1"))
+        db_status = "ok"
+    except Exception as e:
+        db_status = f"error: {e}"
     
-    This endpoint returns immediately without database checks.
-    Used by Render's health check system.
+    # Test Redis if configured
+    redis_status = "not_configured"
+    try:
+        redis_url = os.environ.get("REDIS_URL")
+        if redis_url:
+            import redis
+            if redis_url.startswith("rediss://"):
+                redis_url = redis_url.replace("rediss://", "redis://")
+            client = redis.from_url(redis_url, socket_connect_timeout=3)
+            client.ping()
+            redis_status = "ok"
+    except Exception as e:
+        redis_status = f"error: {e}"
     
-    Returns:
-        Simple JSON response indicating service is running
-    """
-    return jsonify({"status": "ok", "service": "mdraft"}), 200
+    response = {
+        "status": "ok" if db_status == "ok" else "degraded",
+        "database": db_status,
+        "redis": redis_status,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+    
+    status_code = 200 if db_status == "ok" else 503
+    return jsonify(response), status_code
 
 
 @bp.get("/health/full")
