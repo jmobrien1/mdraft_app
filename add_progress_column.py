@@ -38,7 +38,7 @@ def add_progress_column():
                 # Add the column
                 db.session.execute(text("""
                     ALTER TABLE conversions 
-                    ADD COLUMN progress INTEGER
+                    ADD COLUMN progress INTEGER NOT NULL DEFAULT 0
                 """))
                 db.session.commit()
                 print("✅ Successfully added progress column to conversions table")

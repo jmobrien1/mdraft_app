@@ -9,7 +9,7 @@ BEGIN
         WHERE table_name = 'conversions' 
         AND column_name = 'progress'
     ) THEN
-        ALTER TABLE conversions ADD COLUMN progress INTEGER;
+        ALTER TABLE conversions ADD COLUMN progress INTEGER NOT NULL DEFAULT 0;
         RAISE NOTICE 'Added progress column to conversions table';
     ELSE
         RAISE NOTICE 'Progress column already exists in conversions table';
@@ -17,4 +17,4 @@ BEGIN
 END $$;
 
 -- For SQLite (fallback)
--- ALTER TABLE conversions ADD COLUMN progress INTEGER;
+-- ALTER TABLE conversions ADD COLUMN progress INTEGER NOT NULL DEFAULT 0;

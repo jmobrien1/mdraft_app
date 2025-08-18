@@ -12,7 +12,7 @@ class Conversion(db.Model):
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     filename = db.Column(db.String(255), nullable=False)
     status = db.Column(SQLAlchemyEnum(ConversionStatus), nullable=False, default=ConversionStatus.QUEUED)
-    progress = db.Column(db.Integer, nullable=True)  # Progress from 0-100
+    progress = db.Column(db.Integer, nullable=False, server_default="0")  # Progress from 0-100
     markdown = db.Column(db.Text, nullable=True)
     error = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
