@@ -569,7 +569,8 @@ def get_conversion(id):
         
         # Check if this is an async task that failed
         error_details = None
-        if conv.status == "FAILED" and conv.error:
+        status_value = conv.status.value if hasattr(conv.status, 'value') else str(conv.status)
+        if status_value == "FAILED" and conv.error:
             current_app.logger.info(f"Conversion failed with error: {conv.error}")
             error_details = {
                 "error": conv.error,
@@ -581,18 +582,23 @@ def get_conversion(id):
         progress = getattr(conv, "progress", None)
         if progress is None:
             # Guess a sane default from status if you have it
-            status = getattr(conv, "status", "").lower()
-            progress = 100 if status in {"done", "completed", "finished", "success"} else 0
-            current_app.logger.info(f"Progress was None, using default: {progress} based on status: {status}")
+            status_str = status_value.lower()
+            progress = 100 if status_str in {"done", "completed", "finished", "success"} else 0
+            current_app.logger.info(f"Progress was None, using default: {progress} based on status: {status_str}")
         else:
             current_app.logger.info(f"Progress from database: {progress}")
         
         current_app.logger.info("Preparing response data...")
+        
+        # Convert enum status to string for JSON serialization
+        status_value = conv.status.value if hasattr(conv.status, 'value') else str(conv.status)
+        current_app.logger.info(f"Status enum: {conv.status}, Status value: {status_value}")
+        
         response_data = {
             "id": conv.id,  # Frontend expects 'id' first
             "conversion_id": conv.id,
             "filename": conv.filename,
-            "status": conv.status,
+            "status": status_value,  # Use string value instead of enum object
             "progress": progress,
             "error": error_details,
             "links": {
