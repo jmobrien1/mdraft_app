@@ -760,13 +760,16 @@ def list_conversions():
             progress = getattr(c, "progress", None)
             if progress is None:
                 # Guess a sane default from status if you have it
-                status = getattr(c, "status", "").lower()
-                progress = 100 if status in {"done", "completed", "finished", "success"} else 0
+                status_str = c.status.value.lower() if hasattr(c.status, 'value') else str(c.status).lower()
+                progress = 100 if status_str in {"done", "completed", "finished", "success"} else 0
+            
+            # Convert enum status to string for JSON serialization
+            status_value = c.status.value if hasattr(c.status, 'value') else str(c.status)
             
             items.append({
                 "id": c.id,
                 "filename": c.filename,
-                "status": c.status,
+                "status": status_value,  # Use string value instead of enum object
                 "progress": progress,
                 "created_at": c.created_at.isoformat(),
                 "links": {
