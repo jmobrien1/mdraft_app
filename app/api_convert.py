@@ -123,6 +123,7 @@ def _atomic_upload_handler(file_hash: str, filename: str, original_mime: str,
                 current_app.logger.info(f"Idempotency hit: returning existing completed conversion {existing_id} for SHA256 {file_hash[:8]}...")
                 db.session.rollback()  # Release the lock
                 return {
+                    "id": existing_id,  # Frontend expects 'id' first
                     "conversion_id": existing_id,
                     "status": "COMPLETED",
                     "filename": existing_filename,
@@ -136,6 +137,7 @@ def _atomic_upload_handler(file_hash: str, filename: str, original_mime: str,
                 current_app.logger.info(f"Duplicate upload detected: returning existing pending conversion {existing_id} for SHA256 {file_hash[:8]}...")
                 db.session.rollback()  # Release the lock
                 return {
+                    "id": existing_id,  # Frontend expects 'id' first
                     "conversion_id": existing_id,
                     "status": existing_status,
                     "filename": existing_filename,
@@ -171,6 +173,7 @@ def _atomic_upload_handler(file_hash: str, filename: str, original_mime: str,
         current_app.logger.info(f"Created new conversion {conv_id} and enqueued task {task_id} for SHA256 {file_hash[:8]}...")
         
         return {
+            "id": conv_id,  # Frontend expects 'id' first
             "conversion_id": conv_id,
             "status": conv.status,
             "filename": filename,
@@ -193,6 +196,7 @@ def _atomic_upload_handler(file_hash: str, filename: str, original_mime: str,
         
         if existing:
             return {
+                "id": existing.id,  # Frontend expects 'id' first
                 "conversion_id": existing.id,
                 "status": existing.status,
                 "filename": existing.filename,
@@ -362,6 +366,7 @@ def _legacy_upload_handler(tmp_path: str, filename: str, file_hash: str,
     if existing and existing.markdown:
         current_app.logger.info(f"Idempotency hit: returning existing conversion {existing.id} for SHA256 {file_hash[:8]}...")
         return jsonify({
+            "id": existing.id,  # Frontend expects 'id' first
             "conversion_id": existing.id,
             "status": "COMPLETED",
             "filename": existing.filename,
@@ -377,6 +382,7 @@ def _legacy_upload_handler(tmp_path: str, filename: str, file_hash: str,
     if existing_pending:
         current_app.logger.info(f"Duplicate upload detected: returning existing pending conversion {existing_pending.id} for SHA256 {file_hash[:8]}...")
         return jsonify({
+            "id": existing_pending.id,  # Frontend expects 'id' first
             "conversion_id": existing_pending.id,
             "status": existing_pending.status,
             "filename": existing_pending.filename,
@@ -420,6 +426,7 @@ def _legacy_upload_handler(tmp_path: str, filename: str, file_hash: str,
         current_app.logger.info(f"Enqueued conversion task {task_id} for conversion {conv_id} (SHA256: {file_hash[:8]}...)")
 
         return jsonify({
+            "id": conv_id,  # Frontend expects 'id' first
             "conversion_id": conv_id,
             "status": conv.status,
             "filename": filename,
@@ -456,6 +463,7 @@ def get_conversion(id):
         }
     
     return jsonify({
+        "id": conv.id,  # Frontend expects 'id' first
         "conversion_id": conv.id,
         "filename": conv.filename,
         "status": conv.status,
@@ -494,6 +502,20 @@ def _get_readable_error_message(error_text: str) -> str:
 def get_conversion_markdown(id):
     conv = Conversion.query.get_or_404(id)
     return Response((conv.markdown or ""), mimetype="text/markdown")
+
+@bp.post("/convert")
+@login_required
+@limiter.limit(lambda: current_app.config.get("UPLOAD_RATE_LIMIT", "20 per minute"), 
+               key_func=lambda: get_upload_rate_limit_key())
+@csrf_exempt_for_api
+def api_convert():
+    """
+    Alias for /api/upload endpoint to maintain UI compatibility.
+    
+    This endpoint provides the same functionality as /api/upload but
+    uses the /api/convert path that the UI expects.
+    """
+    return api_upload()
 
 @bp.get("/conversions")
 @limiter.limit("240 per minute")  # Rate limit configured in centralized config

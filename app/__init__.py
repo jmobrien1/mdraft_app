@@ -96,7 +96,12 @@ def create_app() -> Flask:
         # Load configuration with error handling
         try:
             app.config["SECRET_KEY"] = ENV.get("SECRET_KEY", "changeme")
-            app.config.setdefault("MAX_CONTENT_LENGTH", 25 * 1024 * 1024)
+            app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024  # 100 MB
+            
+            # CSRF configuration
+            app.config["WTF_CSRF_ENABLED"] = True
+            app.config["WTF_CSRF_TIME_LIMIT"] = 3600  # 1 hour
+            
             logger.info("Basic configuration loaded")
         except Exception as e:
             logger.error(f"Configuration loading failed: {e}")
@@ -171,35 +176,9 @@ def create_app() -> Flask:
         # Rate limiting is now handled by init_extensions()
         logger.info("Rate limiting configured during extension initialization")
         
-        # Register blueprints with error handling
-        blueprint_errors = []
-        try:
-            from .auth.routes import bp as auth_bp
-            app.register_blueprint(auth_bp)
-            logger.info("Auth blueprint registered")
-        except Exception as e:
-            blueprint_errors.append(f"Auth blueprint: {e}")
-        
-        try:
-            from .ui import bp as ui_bp
-            app.register_blueprint(ui_bp)
-            logger.info("UI blueprint registered")
-        except Exception as e:
-            blueprint_errors.append(f"UI blueprint: {e}")
-        
-        try:
-            from .health import bp as health_bp
-            app.register_blueprint(health_bp)
-            logger.info("Health blueprint registered")
-        except Exception as e:
-            blueprint_errors.append(f"Health blueprint: {e}")
-        
-        try:
-            from .beta import bp as beta_bp
-            app.register_blueprint(beta_bp)
-            logger.info("Beta blueprint registered")
-        except Exception as e:
-            blueprint_errors.append(f"Beta blueprint: {e}")
+        # Register all blueprints using centralized registration
+        from .blueprints import register_blueprints
+        blueprint_errors = register_blueprints(app)
         
         # Add essential endpoints directly if blueprints fail
         if blueprint_errors:
