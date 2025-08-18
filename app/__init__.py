@@ -180,6 +180,15 @@ def create_app() -> Flask:
         from .blueprints import register_blueprints
         blueprint_errors = register_blueprints(app)
         
+        # Register API shim to ensure UI compatibility
+        try:
+            from app.api_shim import api_bp
+            app.register_blueprint(api_bp)
+            logger.info("API shim registered for UI compatibility")
+        except Exception as e:
+            logger.warning(f"Failed to register API shim: {e}")
+            blueprint_errors.append(f"API shim registration failed: {e}")
+        
         # Add essential endpoints directly if blueprints fail
         if blueprint_errors:
             logger.warning(f"Blueprint errors: {blueprint_errors}")
