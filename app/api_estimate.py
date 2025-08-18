@@ -101,13 +101,21 @@ def _calculate_cost(pages: int) -> str:
 
 
 @bp.route("/estimate", methods=["POST"])
-@login_required
 def estimate() -> Any:
     """Estimate pages and cost for a document without uploading.
     
     Returns:
         JSON response with filetype, pages, and estimated cost
     """
+    from flask import make_response
+    from app.auth.visitor import get_or_create_visitor_session_id
+    from flask_login import current_user
+    
+    # Ensure visitor session exists for anonymous users
+    if not getattr(current_user, "is_authenticated", False):
+        resp = make_response()
+        vid, resp = get_or_create_visitor_session_id(resp)
+    
     if not allow_session_or_api_key():
         return jsonify({"error": "unauthorized"}), 401
     
@@ -157,8 +165,18 @@ def estimate() -> Any:
     # Calculate cost
     est_cost_usd = _calculate_cost(pages)
     
-    return jsonify({
-        "filetype": filetype,
-        "pages": pages,
-        "est_cost_usd": est_cost_usd
-    })
+    # Create response with visitor session cookie if needed
+    if not getattr(current_user, "is_authenticated", False):
+        resp = make_response(jsonify({
+            "filetype": filetype,
+            "pages": pages,
+            "est_cost_usd": est_cost_usd
+        }))
+        vid, resp = get_or_create_visitor_session_id(resp)
+        return resp
+    else:
+        return jsonify({
+            "filetype": filetype,
+            "pages": pages,
+            "est_cost_usd": est_cost_usd
+        })

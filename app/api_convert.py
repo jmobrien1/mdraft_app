@@ -234,7 +234,6 @@ def _convert_with_markitdown(path: str) -> str:
             return fh.read(8192).decode("utf-8", errors="ignore")
 
 @bp.post("/upload")
-@login_required
 @limiter.limit(lambda: current_app.config.get("UPLOAD_RATE_LIMIT", "20 per minute"), 
                key_func=lambda: get_upload_rate_limit_key())
 @csrf_exempt_for_api
@@ -511,7 +510,6 @@ def get_conversion_markdown(id):
     return Response((conv.markdown or ""), mimetype="text/markdown")
 
 @bp.post("/convert")
-@login_required
 @limiter.limit(lambda: current_app.config.get("UPLOAD_RATE_LIMIT", "20 per minute"), 
                key_func=lambda: get_upload_rate_limit_key())
 @csrf_exempt_for_api
@@ -522,7 +520,35 @@ def api_convert():
     This endpoint provides the same functionality as /api/upload but
     uses the /api/convert path that the UI expects.
     """
-    return api_upload()
+    from flask import make_response
+    from app.auth.visitor import get_or_create_visitor_session_id
+    from flask_login import current_user
+    
+    # Ensure visitor session exists for anonymous users
+    if not getattr(current_user, "is_authenticated", False):
+        resp = make_response()
+        vid, resp = get_or_create_visitor_session_id(resp)
+    
+    if not allow_session_or_api_key():
+        return jsonify({"error": "unauthorized"}), 401
+    
+    # Call api_upload and handle visitor session cookie
+    result = api_upload()
+    
+    # If this is an anonymous user, we need to add the visitor session cookie
+    if not getattr(current_user, "is_authenticated", False):
+        # Convert the result to a response object if it's not already
+        if isinstance(result, tuple):
+            response_data, status_code = result
+            resp = make_response(response_data, status_code)
+        else:
+            resp = make_response(result)
+        
+        # Add visitor session cookie
+        vid, resp = get_or_create_visitor_session_id(resp)
+        return resp
+    
+    return result
 
 @bp.get("/conversions")
 @limiter.limit("240 per minute")  # Rate limit configured in centralized config
