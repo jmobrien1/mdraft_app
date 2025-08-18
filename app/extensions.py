@@ -59,7 +59,6 @@ def init_extensions(app):
     
     # Initialize authentication extensions
     bcrypt.init_app(app)
-    login_manager.init_app(app)
     csrf.init_app(app)
     
     # Initialize rate limiting

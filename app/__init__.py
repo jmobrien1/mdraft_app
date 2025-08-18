@@ -213,45 +213,33 @@ def create_app() -> Flask:
             def fallback_root():
                 return {"status": "running", "note": "degraded mode"}
         
-        # Initialize Flask-Login user loader
+        # Initialize Flask-Login on this app
+        login_manager.init_app(app)
+
         @login_manager.user_loader
         def load_user(user_id: str):
-            """Resilient user loader that supports UUID or int PKs."""
+            """Return User by primary key. Supports UUID or int PKs."""
             if not user_id:
                 return None
-            
-            # Try integer PK first (since User model uses int primary key)
+
+            # Try UUID first
+            key = user_id
             try:
-                key = int(user_id)
-                # SQLAlchemy 2.x preferred, with fallback
-                try:
-                    obj = db.session.get(User, key)
-                    if obj is None:
-                        # Fallback to legacy query
-                        obj = User.query.get(key)
-                except Exception:
-                    try:
-                        obj = User.query.get(key)  # legacy
-                    except Exception:
-                        obj = None
-                return obj
+                key = uuid.UUID(user_id)
             except ValueError:
-                # Try UUID as fallback (for future models that might use UUID)
+                # Fallback: integer primary key
                 try:
-                    key = uuid.UUID(user_id)
-                    # SQLAlchemy 2.x preferred, with fallback
-                    try:
-                        obj = db.session.get(User, key)
-                        if obj is None:
-                            # Fallback to legacy query
-                            obj = User.query.get(key)
-                    except Exception:
-                        try:
-                            obj = User.query.get(key)  # legacy
-                        except Exception:
-                            obj = None
-                    return obj
+                    key = int(user_id)
                 except ValueError:
+                    return None
+
+            # SQLAlchemy 2.x preferred (with fallback)
+            try:
+                return db.session.get(User, key)
+            except Exception:
+                try:
+                    return User.query.get(key)
+                except Exception:
                     return None
         
         logger.info("=== Flask App Factory Completed Successfully ===")
