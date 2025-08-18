@@ -111,7 +111,7 @@ def create_app() -> Flask:
             app.config["WTF_CSRF_TIME_LIMIT"] = 3600  # 1 hour
             
             # Rate limiter configuration
-            uri = os.getenv("FLASK_LIMITER_STORAGE_URI")
+            uri = _os.getenv("FLASK_LIMITER_STORAGE_URI")
             if uri:
                 app.config["RATELIMIT_STORAGE_URI"] = uri
             
