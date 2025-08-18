@@ -119,6 +119,10 @@ class User(UserMixin, db.Model):
         """Check if the user account is active."""
         return not self.revoked
     
+    def get_id(self) -> str:
+        """Return a stable string ID for Flask-Login."""
+        return str(self.id)
+    
     def __repr__(self) -> str:
         return f"<User {self.email}>"
 
