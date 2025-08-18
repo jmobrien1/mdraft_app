@@ -1,310 +1,365 @@
 #!/usr/bin/env python3
 """
-Startup validation script for mdraft application.
+Startup Validation for mdraft application.
 
-This script performs comprehensive validation of the application startup
-process to help troubleshoot deployment issues on Render.
+This script validates that all critical components are working before
+the application starts. It's designed to be run during deployment
+to catch issues early.
 """
+
 import os
 import sys
-import traceback
-from pathlib import Path
+import logging
+import time
+from typing import Dict, Any, List
+from datetime import datetime
 
-# Add the project root to the Python path
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
-def validate_environment():
+
+class ValidationError(Exception):
+    """Custom exception for validation errors."""
+    pass
+
+
+def validate_environment() -> Dict[str, Any]:
     """Validate environment variables and configuration."""
-    print("=== Environment Validation ===")
+    logger.info("Validating environment configuration...")
     
-    # Check critical environment variables
-    critical_vars = [
-        'DATABASE_URL',
-        'SECRET_KEY',
+    results = {
+        'status': 'ok',
+        'errors': [],
+        'warnings': []
+    }
+    
+    # Required environment variables
+    required_vars = [
         'FLASK_ENV',
+        'SECRET_KEY',
+        'DATABASE_URL'
     ]
     
-    for var in critical_vars:
-        value = os.getenv(var)
-        if value:
-            print(f"✅ {var}: {'*' * min(len(value), 10)}... (length: {len(value)})")
-        else:
-            print(f"❌ {var}: NOT SET")
+    for var in required_vars:
+        if not os.environ.get(var):
+            results['errors'].append(f"Missing required environment variable: {var}")
     
-    # Check optional but important variables
+    # Optional but recommended variables
     optional_vars = [
-        'REDIS_URL',
-        'SESSION_REDIS_URL',
-        'FLASK_LIMITER_STORAGE_URI',
-        'SESSION_BACKEND',
-        'LOG_LEVEL',
         'SENTRY_DSN',
+        'REDIS_URL',
+        'GCS_BUCKET_NAME'
     ]
     
     for var in optional_vars:
-        value = os.getenv(var)
-        if value:
-            # Check for trailing whitespace/newlines in critical URLs
-            if var in ['REDIS_URL', 'SESSION_REDIS_URL', 'FLASK_LIMITER_STORAGE_URI']:
-                if value != value.strip():
-                    print(f"⚠️  {var}: HAS TRAILING WHITESPACE/NEWLINES")
-                    print(f"   Original: {repr(value)}")
-                    print(f"   Stripped: {repr(value.strip())}")
-                else:
-                    print(f"✅ {var}: {'*' * min(len(value), 10)}... (length: {len(value)})")
-                
-                # Check Redis URL scheme
-                if var in ['REDIS_URL', 'SESSION_REDIS_URL', 'FLASK_LIMITER_STORAGE_URI'] and value:
-                    if value.startswith('redis://') and 'upstash' in value.lower():
-                        print(f"⚠️  {var}: Uses redis:// but Upstash requires rediss://")
-                    elif value.startswith('rediss://'):
-                        print(f"✅ {var}: Uses correct rediss:// scheme")
-            else:
-                print(f"✅ {var}: {'*' * min(len(value), 10)}... (length: {len(value)})")
-        else:
-            print(f"⚠️  {var}: NOT SET (optional)")
+        if not os.environ.get(var):
+            results['warnings'].append(f"Missing optional environment variable: {var}")
     
-    print()
+    # Validate Flask environment
+    flask_env = os.environ.get('FLASK_ENV', 'development')
+    if flask_env not in ['development', 'production', 'testing']:
+        results['warnings'].append(f"Unusual FLASK_ENV value: {flask_env}")
+    
+    if results['errors']:
+        results['status'] = 'error'
+    
+    return results
 
-def validate_imports():
-    """Validate that all required modules can be imported."""
-    print("=== Import Validation ===")
-    
-    modules_to_test = [
-        'flask',
-        'flask_sqlalchemy',
-        'flask_migrate',
-        'flask_limiter',
-        'flask_bcrypt',
-        'flask_login',
-        'flask_wtf',
-        'flask_session',
-        'sqlalchemy',
-        'psycopg',
-    ]
-    
-    all_successful = True
-    for module in modules_to_test:
-        try:
-            __import__(module)
-            print(f"✅ {module}: Imported successfully")
-        except ImportError as e:
-            print(f"❌ {module}: Import failed - {e}")
-            all_successful = False
-        except Exception as e:
-            print(f"⚠️  {module}: Import error - {e}")
-            all_successful = False
-    
-    print()
-    return all_successful
 
-def validate_app_imports():
-    """Validate that app modules can be imported."""
-    print("=== App Module Import Validation ===")
+def validate_database() -> Dict[str, Any]:
+    """Validate database connectivity and schema."""
+    logger.info("Validating database connectivity...")
     
-    # Test core app import first
-    try:
-        import app
-        print(f"✅ app: Imported successfully from {app.__file__}")
-    except ImportError as e:
-        print(f"❌ app: Import failed - {e}")
-        return False
-    except Exception as e:
-        print(f"⚠️  app: Import error - {e}")
-        return False
-    
-    # Test key modules
-    key_modules = [
-        'app.config',
-        'app.models',
-        'app.ui',
-        'app.routes',
-        'app.health',
-    ]
-    
-    for module in key_modules:
-        try:
-            __import__(module)
-            print(f"✅ {module}: Imported successfully")
-        except ImportError as e:
-            print(f"❌ {module}: Import failed - {e}")
-        except Exception as e:
-            print(f"⚠️  {module}: Import error - {e}")
-    
-    print()
-    return True
-
-def validate_configuration():
-    """Validate configuration loading."""
-    print("=== Configuration Validation ===")
+    results = {
+        'status': 'ok',
+        'errors': [],
+        'warnings': []
+    }
     
     try:
-        from app.config import get_config, ConfigurationError
+        from sqlalchemy import create_engine, text, inspect
         
-        print("Loading configuration...")
-        config = get_config()
-        print("✅ Configuration loaded successfully")
+        db_url = os.environ.get('DATABASE_URL')
+        if not db_url:
+            results['errors'].append("DATABASE_URL not set")
+            results['status'] = 'error'
+            return results
         
-        print("Validating configuration...")
-        config.validate()
-        print("✅ Configuration validation passed")
-        
-        # Test some configuration values
-        print(f"Database URL type: {type(config.DATABASE_URL)}")
-        print(f"Database URL length: {len(config.DATABASE_URL) if config.DATABASE_URL else 0}")
-        print(f"Session backend: {config.SESSION_BACKEND}")
-        print(f"Login disabled: {config.LOGIN_DISABLED}")
-        
-    except ConfigurationError as e:
-        print(f"❌ Configuration validation failed: {e}")
-        return False
-    except Exception as e:
-        print(f"❌ Configuration error: {e}")
-        print(f"Error type: {type(e).__name__}")
-        print(f"Error details: {str(e)}")
-        return False
-    
-    print()
-    return True
-
-def validate_database():
-    """Validate database connectivity."""
-    print("=== Database Validation ===")
-    
-    try:
-        from app.config import get_config
-        from app.utils.db_url import normalize_db_url
-        
-        config = get_config()
-        db_url = normalize_db_url(config.DATABASE_URL)
-        
-        print(f"Database URL normalized successfully")
-        print(f"Database URL type: {type(db_url)}")
-        print(f"Database URL length: {len(db_url) if db_url else 0}")
-        
-        # Try to create a test connection
-        from sqlalchemy import create_engine, text
-        
-        engine = create_engine(db_url, echo=False)
+        # Test connectivity
+        engine = create_engine(db_url)
         with engine.connect() as conn:
-            result = conn.execute(text("SELECT 1"))
-            print("✅ Database connection test successful")
+            conn.execute(text("SELECT 1"))
+        
+        # Check required tables
+        inspector = inspect(engine)
+        existing_tables = inspector.get_table_names()
+        
+        required_tables = ['proposals', 'conversions', 'users', 'api_keys']
+        missing_tables = [table for table in required_tables if table not in existing_tables]
+        
+        if missing_tables:
+            results['warnings'].append(f"Missing tables: {missing_tables}")
+        
+        # Check proposals table schema
+        if 'proposals' in existing_tables:
+            columns = [col['name'] for col in inspector.get_columns('proposals')]
+            required_columns = ['id', 'title', 'created_at']
+            missing_columns = [col for col in required_columns if col not in columns]
             
+            if missing_columns:
+                results['warnings'].append(f"Missing columns in proposals table: {missing_columns}")
+        
+        logger.info(f"Database validation: {len(existing_tables)} tables found")
+        
     except Exception as e:
-        print(f"❌ Database validation failed: {e}")
-        print(f"Error type: {type(e).__name__}")
-        print(f"Error details: {str(e)}")
-        return False
+        results['errors'].append(f"Database validation failed: {e}")
+        results['status'] = 'error'
     
-    print()
-    return True
+    if results['errors']:
+        results['status'] = 'error'
+    
+    return results
 
-def validate_app_creation():
-    """Validate Flask app creation."""
-    print("=== Flask App Creation Validation ===")
+
+def validate_redis() -> Dict[str, Any]:
+    """Validate Redis connectivity if configured."""
+    logger.info("Validating Redis connectivity...")
+    
+    results = {
+        'status': 'ok',
+        'errors': [],
+        'warnings': []
+    }
+    
+    redis_url = os.environ.get('REDIS_URL')
+    if not redis_url:
+        results['warnings'].append("Redis not configured")
+        return results
+    
+    try:
+        import redis
+        
+        r = redis.from_url(redis_url)
+        r.ping()
+        logger.info("Redis connectivity: OK")
+        
+    except Exception as e:
+        results['warnings'].append(f"Redis connectivity failed: {e}")
+    
+    return results
+
+
+def validate_storage() -> Dict[str, Any]:
+    """Validate storage configuration."""
+    logger.info("Validating storage configuration...")
+    
+    results = {
+        'status': 'ok',
+        'errors': [],
+        'warnings': []
+    }
+    
+    use_gcs = os.environ.get('USE_GCS', '0').lower() in ['1', 'true', 'yes']
+    
+    if use_gcs:
+        # Validate Google Cloud Storage configuration
+        gcs_bucket = os.environ.get('GCS_BUCKET_NAME')
+        if not gcs_bucket:
+            results['errors'].append("GCS_BUCKET_NAME required when USE_GCS=1")
+        
+        # Check for Google Cloud credentials
+        if not os.environ.get('GOOGLE_APPLICATION_CREDENTIALS'):
+            results['warnings'].append("GOOGLE_APPLICATION_CREDENTIALS not set")
+    else:
+        # Local storage - check if uploads directory exists
+        uploads_dir = 'uploads'
+        if not os.path.exists(uploads_dir):
+            try:
+                os.makedirs(uploads_dir, exist_ok=True)
+                logger.info(f"Created uploads directory: {uploads_dir}")
+            except Exception as e:
+                results['warnings'].append(f"Could not create uploads directory: {e}")
+    
+    if results['errors']:
+        results['status'] = 'error'
+    
+    return results
+
+
+def validate_application_factory() -> Dict[str, Any]:
+    """Validate that the Flask application can be created."""
+    logger.info("Validating application factory...")
+    
+    results = {
+        'status': 'ok',
+        'errors': [],
+        'warnings': []
+    }
     
     try:
         from app import create_app
         
-        print("Creating Flask app...")
+        # Create the application
         app = create_app()
-        print("✅ Flask app created successfully")
         
-        # Check if critical routes are registered
-        root_routes = [r for r in app.url_map.iter_rules() if r.rule == "/"]
-        print(f"Root routes: {len(root_routes)}")
-        for route in root_routes:
-            print(f"  - {route.endpoint}")
+        # Test basic functionality
+        with app.test_client() as client:
+            # Test health endpoint
+            response = client.get('/health/simple')
+            if response.status_code != 200:
+                results['errors'].append(f"Health endpoint returned {response.status_code}")
+            
+            # Test root endpoint
+            response = client.get('/')
+            if response.status_code not in [200, 302]:  # 302 for redirects
+                results['warnings'].append(f"Root endpoint returned {response.status_code}")
         
-        health_routes = [r for r in app.url_map.iter_rules() if "health" in r.rule]
-        print(f"Health routes: {len(health_routes)}")
-        for route in health_routes:
-            print(f"  - {route.rule} -> {route.endpoint}")
-        
-        total_routes = len(list(app.url_map.iter_rules()))
-        print(f"Total routes: {total_routes}")
-        
-        return app
+        logger.info("Application factory validation: OK")
         
     except Exception as e:
-        print(f"❌ Flask app creation failed: {e}")
-        print(f"Error type: {type(e).__name__}")
-        print(f"Error details: {str(e)}")
-        print(f"Traceback: {traceback.format_exc()}")
-        return None
+        results['errors'].append(f"Application factory validation failed: {e}")
+        results['status'] = 'error'
+    
+    if results['errors']:
+        results['status'] = 'error'
+    
+    return results
 
-def validate_app_context():
-    """Validate app context operations."""
-    print("=== App Context Validation ===")
+
+def validate_wsgi_entry_point() -> Dict[str, Any]:
+    """Validate the WSGI entry point."""
+    logger.info("Validating WSGI entry point...")
+    
+    results = {
+        'status': 'ok',
+        'errors': [],
+        'warnings': []
+    }
     
     try:
-        from app import create_app
+        # Test importing the WSGI app
+        from wsgi import app
         
-        app = create_app()
+        # Check if it's a Flask app
+        from flask import Flask
+        if not isinstance(app, Flask):
+            results['errors'].append("WSGI app is not a Flask application")
         
-        with app.app_context():
-            print("✅ App context created successfully")
-            
-            # Test database operations
-            from app import db
-            from sqlalchemy import text
-            
-            result = db.session.execute(text("SELECT 1"))
-            print("✅ Database query in app context successful")
-            
-            # Test configuration access
-            from flask import current_app
-            print(f"App name: {current_app.name}")
-            print(f"App config keys: {len(current_app.config)}")
-            
+        # Test basic functionality
+        with app.test_client() as client:
+            response = client.get('/health/simple')
+            if response.status_code != 200:
+                results['errors'].append(f"WSGI health endpoint returned {response.status_code}")
+        
+        logger.info("WSGI entry point validation: OK")
+        
     except Exception as e:
-        print(f"❌ App context validation failed: {e}")
-        print(f"Error type: {type(e).__name__}")
-        print(f"Error details: {str(e)}")
-        return False
+        results['errors'].append(f"WSGI entry point validation failed: {e}")
+        results['status'] = 'error'
     
-    print()
-    return True
+    if results['errors']:
+        results['status'] = 'error'
+    
+    return results
+
+
+def run_all_validations() -> Dict[str, Any]:
+    """Run all validation checks."""
+    logger.info("=== STARTUP VALIDATION STARTED ===")
+    logger.info(f"Timestamp: {datetime.now()}")
+    
+    validations = [
+        ('Environment', validate_environment),
+        ('Database', validate_database),
+        ('Redis', validate_redis),
+        ('Storage', validate_storage),
+        ('Application Factory', validate_application_factory),
+        ('WSGI Entry Point', validate_wsgi_entry_point)
+    ]
+    
+    all_results = {}
+    has_errors = False
+    has_warnings = False
+    
+    for name, validation_func in validations:
+        logger.info(f"Running {name} validation...")
+        try:
+            result = validation_func()
+            all_results[name] = result
+            
+            if result['status'] == 'error':
+                has_errors = True
+                logger.error(f"❌ {name} validation failed")
+                for error in result['errors']:
+                    logger.error(f"  - {error}")
+            
+            if result['warnings']:
+                has_warnings = True
+                logger.warning(f"⚠️  {name} validation warnings")
+                for warning in result['warnings']:
+                    logger.warning(f"  - {warning}")
+            
+            if result['status'] == 'ok' and not result['warnings']:
+                logger.info(f"✅ {name} validation passed")
+                
+        except Exception as e:
+            logger.error(f"❌ {name} validation crashed: {e}")
+            all_results[name] = {
+                'status': 'error',
+                'errors': [f"Validation crashed: {e}"],
+                'warnings': []
+            }
+            has_errors = True
+    
+    # Summary
+    logger.info("=== VALIDATION SUMMARY ===")
+    
+    if has_errors:
+        logger.error("❌ Validation failed - application may not start correctly")
+        return {
+            'status': 'error',
+            'results': all_results,
+            'message': 'Startup validation failed'
+        }
+    elif has_warnings:
+        logger.warning("⚠️  Validation completed with warnings")
+        return {
+            'status': 'warning',
+            'results': all_results,
+            'message': 'Startup validation completed with warnings'
+        }
+    else:
+        logger.info("✅ All validations passed")
+        return {
+            'status': 'ok',
+            'results': all_results,
+            'message': 'Startup validation completed successfully'
+        }
+
 
 def main():
-    """Run all validation checks."""
-    print("🚀 Starting mdraft application validation...")
-    print(f"Python version: {sys.version}")
-    print(f"Working directory: {os.getcwd()}")
-    print()
-    
-    # Run validation checks
-    validate_environment()
-    
-    if not validate_imports():
-        print("❌ Import validation failed")
+    """Main validation function."""
+    try:
+        result = run_all_validations()
+        
+        if result['status'] == 'error':
+            logger.error("=== STARTUP VALIDATION FAILED ===")
+            return 1
+        elif result['status'] == 'warning':
+            logger.warning("=== STARTUP VALIDATION COMPLETED WITH WARNINGS ===")
+            return 0
+        else:
+            logger.info("=== STARTUP VALIDATION COMPLETED SUCCESSFULLY ===")
+            return 0
+            
+    except Exception as e:
+        logger.error(f"Validation script crashed: {e}")
         return 1
-    
-    if not validate_app_imports():
-        print("❌ App module import validation failed")
-        return 1
-    
-    if not validate_configuration():
-        print("❌ Configuration validation failed")
-        return 1
-    
-    if not validate_database():
-        print("❌ Database validation failed")
-        return 1
-    
-    app = validate_app_creation()
-    if not app:
-        print("❌ Flask app creation failed")
-        return 1
-    
-    if not validate_app_context():
-        print("❌ App context validation failed")
-        return 1
-    
-    print("🎉 All validation checks passed!")
-    print("The application should be ready to start.")
-    return 0
+
 
 if __name__ == "__main__":
     sys.exit(main())

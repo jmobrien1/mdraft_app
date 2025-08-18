@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from flask import current_app
 from sqlalchemy.orm import Session
 
-from .. import db
+from ..extensions import db
 from ..models import Proposal, ProposalDocument, Requirement
 
 

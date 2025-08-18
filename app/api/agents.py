@@ -15,7 +15,7 @@ from flask import Blueprint, request, jsonify, current_app, make_response
 from flask_login import login_required, current_user
 from sqlalchemy.orm import Session
 
-from .. import db
+from ..extensions import db
 from ..models import Proposal, ProposalDocument, Requirement, User
 from ..services.rfp_data_layer import RFPDataLayer
 from ..agents.compliance_agent import ComplianceAgent

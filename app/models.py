@@ -17,7 +17,7 @@ from flask_login import UserMixin
 from sqlalchemy import Integer, String, DateTime, Text, ForeignKey, Boolean, CheckConstraint, Enum as SQLAlchemyEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship, selectinload, joinedload
 
-from . import db
+from .extensions import db
 
 
 class JobStatus(Enum):

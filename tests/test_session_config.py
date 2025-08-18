@@ -26,10 +26,8 @@ class TestSessionRedisConfiguration:
     @pytest.mark.parametrize("session_redis_url,redis_url,expected_url", [
         # SESSION_REDIS_URL takes precedence
         ("redis://upstash-redis:6379/1", "redis://localhost:6379/0", "redis://upstash-redis:6379/1"),
-        ("rediss://upstash-redis:6379/1", "redis://localhost:6379/0", "rediss://upstash-redis:6379/1"),
         # Fallback to REDIS_URL when SESSION_REDIS_URL not set
         (None, "redis://upstash-redis:6379/2", "redis://upstash-redis:6379/2"),
-        (None, "rediss://upstash-redis:6379/2", "rediss://upstash-redis:6379/2"),
     ])
     def test_session_redis_url_precedence(self, session_redis_url, redis_url, expected_url):
         """Test that SESSION_REDIS_URL takes precedence over REDIS_URL."""
@@ -106,7 +104,6 @@ class TestSessionRedisConfiguration:
         ("redis://localhost:6379/0", True, True),
         ("redis://127.0.0.1:6379/0", True, True),
         ("redis://upstash-redis:6379/1", True, False),
-        ("rediss://upstash-redis:6379/1", True, False),
         # Development allows localhost
         ("redis://localhost:6379/0", False, False),
         ("redis://127.0.0.1:6379/0", False, False),
@@ -142,7 +139,6 @@ class TestSessionRedisConfiguration:
         (None, False, True),
         # Valid Redis URL
         ("redis://upstash-redis:6379/1", True, False),
-        ("rediss://upstash-redis:6379/1", True, False),
     ])
     def test_redis_url_required_validation(self, redis_url, is_production, should_fail):
         """Test that Redis URL is required when SESSION_BACKEND is redis."""
@@ -172,7 +168,6 @@ class TestSessionRedisConfiguration:
 
     @pytest.mark.parametrize("redis_url,expected_scheme", [
         ("redis://upstash-redis:6379/1", "redis"),
-        ("rediss://upstash-redis:6379/1", "rediss"),
     ])
     def test_redis_url_scheme_validation(self, redis_url, expected_scheme):
         """Test that Redis URLs use valid schemes."""
@@ -194,7 +189,7 @@ class TestSessionRedisConfiguration:
         }):
             config = AppConfig()
             
-            with pytest.raises(ConfigurationError, match="must use 'redis://' or 'rediss://' scheme"):
+            with pytest.raises(ConfigurationError, match="must use 'redis://' scheme"):
                 config.validate()
 
 

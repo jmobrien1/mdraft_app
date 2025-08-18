@@ -474,8 +474,8 @@ class AppConfig:
             else:
                 try:
                     parsed = urlparse(self.SESSION_REDIS_URL_FINAL)
-                    if parsed.scheme not in ["redis", "rediss"]:
-                        errors.append("SESSION_REDIS_URL_FINAL must use 'redis://' or 'rediss://' scheme")
+                    if parsed.scheme != "redis":
+                        errors.append("SESSION_REDIS_URL_FINAL must use 'redis://' scheme")
                     if not parsed.netloc:
                         errors.append("SESSION_REDIS_URL_FINAL must have a valid host")
                     if ("localhost" in parsed.netloc or "127.0.0.1" in parsed.netloc) and is_production:
@@ -505,8 +505,8 @@ class AppConfig:
         if self.FLASK_LIMITER_STORAGE_URI:
             try:
                 parsed = urlparse(self.FLASK_LIMITER_STORAGE_URI)
-                if parsed.scheme not in ["redis", "rediss"]:
-                    errors.append("FLASK_LIMITER_STORAGE_URI must use 'redis://' or 'rediss://' scheme")
+                if parsed.scheme != "redis":
+                    errors.append("FLASK_LIMITER_STORAGE_URI must use 'redis://' scheme")
                 if not parsed.netloc:
                     errors.append("FLASK_LIMITER_STORAGE_URI must have a valid host")
                 if ("localhost" in parsed.netloc or "127.0.0.1" in parsed.netloc) and is_production:

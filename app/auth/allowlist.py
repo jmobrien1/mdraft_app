@@ -7,7 +7,7 @@ or login based on the allowlist configuration.
 import os
 from typing import List, Optional
 from ..models import Allowlist
-from .. import db
+from ..extensions import db
 
 
 def is_email_allowed(email: str) -> bool:

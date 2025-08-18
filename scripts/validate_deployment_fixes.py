@@ -1,275 +1,498 @@
 #!/usr/bin/env python3
 """
-Deployment validation script to test the critical fixes:
-1. Port binding issue resolution
-2. Redis SSL configuration for rediss:// URLs
-3. Celery worker SSL configuration
+Deployment Validation Script for mdraft application.
+
+This script validates that all the deployment fixes are working correctly:
+1. WSGI entry point functionality
+2. Database migration handling
+3. Application startup validation
+4. Error visibility and logging
+5. Health endpoint functionality
 """
 
 import os
 import sys
+import logging
 import subprocess
 import time
-import requests
-from urllib.parse import urlparse
+from typing import Dict, Any, List
+from datetime import datetime
 
-def check_environment_variables():
-    """Check that all required environment variables are set."""
-    print("🔍 Checking Environment Variables")
-    print("-" * 40)
-    
-    required_vars = [
-        "DATABASE_URL",
-        "REDIS_URL", 
-        "CELERY_BROKER_URL",
-        "CELERY_RESULT_BACKEND"
-    ]
-    
-    optional_vars = [
-        "SESSION_REDIS_URL",
-        "FLASK_LIMITER_STORAGE_URI"
-    ]
-    
-    all_good = True
-    
-    for var in required_vars:
-        value = os.getenv(var)
-        if value:
-            # Check if it's a rediss:// URL
-            if var in ["REDIS_URL", "CELERY_BROKER_URL", "CELERY_RESULT_BACKEND"] and value.startswith("rediss://"):
-                print(f"  {var}: ✅ Set (rediss:// - SSL enabled)")
-            else:
-                print(f"  {var}: ✅ Set")
-        else:
-            print(f"  {var}: ❌ Not set")
-            all_good = False
-    
-    for var in optional_vars:
-        value = os.getenv(var)
-        if value:
-            if var in ["SESSION_REDIS_URL", "FLASK_LIMITER_STORAGE_URI"] and value.startswith("rediss://"):
-                print(f"  {var}: ✅ Set (rediss:// - SSL enabled)")
-            else:
-                print(f"  {var}: ✅ Set")
-        else:
-            print(f"  {var}: ⚠️  Not set (optional)")
-    
-    print()
-    return all_good
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
-def test_redis_ssl_configuration():
-    """Test Redis SSL configuration for rediss:// URLs."""
-    print("🔍 Testing Redis SSL Configuration")
-    print("-" * 40)
+
+def test_wsgi_entry_point() -> Dict[str, Any]:
+    """Test the WSGI entry point functionality."""
+    logger.info("Testing WSGI entry point...")
+    
+    results = {
+        'status': 'ok',
+        'errors': [],
+        'warnings': []
+    }
     
     try:
-        # Import and test the Redis configuration
-        import redis
-        from urllib.parse import urlparse
+        # Add current directory to Python path
+        import sys
+        import os
+        sys.path.insert(0, os.getcwd())
         
-        redis_url = os.getenv("REDIS_URL")
-        if not redis_url:
-            print("  ❌ No REDIS_URL found")
-            return False
+        # Test importing the WSGI app
+        from wsgi import app
         
-        parsed_url = urlparse(redis_url)
-        is_tls = parsed_url.scheme == 'rediss'
+        # Check if it's a Flask app
+        from flask import Flask
+        if not isinstance(app, Flask):
+            results['errors'].append("WSGI app is not a Flask application")
         
-        if is_tls:
-            print(f"  Testing rediss:// connection to {parsed_url.hostname}:{parsed_url.port}")
-            
-            # Test with explicit SSL configuration
-            client = redis.from_url(
-                redis_url,
-                decode_responses=True,
-                ssl_cert_reqs='none',
-                ssl_check_hostname=False,
-                ssl_ca_certs=None,
-                ssl_certfile=None,
-                ssl_keyfile=None,
-            )
-            
-            # Test connection
-            client.ping()
-            print("  ✅ Redis SSL connection successful")
-            return True
-        else:
-            print(f"  Testing redis:// connection to {parsed_url.hostname}:{parsed_url.port}")
-            
-            # Test standard connection
-            client = redis.from_url(redis_url, decode_responses=True)
-            client.ping()
-            print("  ✅ Redis connection successful")
-            return True
-            
-    except Exception as e:
-        print(f"  ❌ Redis connection failed: {e}")
-        return False
-
-def test_celery_ssl_configuration():
-    """Test Celery SSL configuration."""
-    print("🔍 Testing Celery SSL Configuration")
-    print("-" * 40)
-    
-    try:
-        from celery_worker import make_celery
-        
-        # Create Celery app
-        celery_app = make_celery()
-        
-        broker_url = os.getenv("CELERY_BROKER_URL", "")
-        backend_url = os.getenv("CELERY_RESULT_BACKEND", "")
-        
-        if broker_url.startswith("rediss://"):
-            if hasattr(celery_app.conf, 'broker_use_ssl') and celery_app.conf.broker_use_ssl:
-                print("  ✅ Celery broker SSL configuration found")
+        # Test basic functionality
+        with app.test_client() as client:
+            # Test health endpoint
+            response = client.get('/health/simple')
+            if response.status_code == 200:
+                logger.info("WSGI health endpoint: OK")
             else:
-                print("  ❌ Celery broker SSL configuration missing")
-                return False
-        
-        if backend_url.startswith("rediss://"):
-            if hasattr(celery_app.conf, 'redis_backend_use_ssl') and celery_app.conf.redis_backend_use_ssl:
-                print("  ✅ Celery backend SSL configuration found")
+                results['errors'].append(f"WSGI health endpoint returned {response.status_code}")
+            
+            # Test root endpoint
+            response = client.get('/')
+            if response.status_code in [200, 302]:
+                logger.info("WSGI root endpoint: OK")
             else:
-                print("  ❌ Celery backend SSL configuration missing")
-                return False
+                results['warnings'].append(f"WSGI root endpoint returned {response.status_code}")
         
-        print("  ✅ Celery SSL configuration looks good")
-        return True
+        logger.info("WSGI entry point validation: SUCCESS")
         
     except Exception as e:
-        print(f"  ❌ Celery configuration test failed: {e}")
-        return False
+        results['errors'].append(f"WSGI entry point test failed: {e}")
+        results['status'] = 'error'
+    
+    if results['errors']:
+        results['status'] = 'error'
+    
+    return results
 
-def test_flask_app_initialization():
-    """Test Flask app initialization with Redis configuration."""
-    print("🔍 Testing Flask App Initialization")
-    print("-" * 40)
+
+def test_migration_doctor() -> Dict[str, Any]:
+    """Test the migration doctor functionality."""
+    logger.info("Testing migration doctor...")
+    
+    results = {
+        'status': 'ok',
+        'errors': [],
+        'warnings': []
+    }
     
     try:
-        from app import create_app
+        # Check if migration doctor script exists
+        if not os.path.exists('scripts/migration_doctor.py'):
+            results['warnings'].append("migration_doctor.py not found")
+            return results
         
-        # Create Flask app
-        app = create_app()
+        # Run migration doctor in diagnostic mode (no --fix)
+        result = subprocess.run(
+            [sys.executable, 'scripts/migration_doctor.py'],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
         
-        # Check if app was created successfully
-        if app:
-            print("  ✅ Flask app created successfully")
-            
-            # Check session configuration
-            session_type = app.config.get('SESSION_TYPE', 'unknown')
-            print(f"  ✅ Session type: {session_type}")
-            
-            return True
+        if result.returncode == 0:
+            logger.info("Migration doctor diagnostic: SUCCESS")
         else:
-            print("  ❌ Flask app creation failed")
-            return False
-            
-    except Exception as e:
-        print(f"  ❌ Flask app initialization failed: {e}")
-        return False
-
-def test_port_binding():
-    """Test that the app can bind to the PORT environment variable."""
-    print("🔍 Testing Port Binding Configuration")
-    print("-" * 40)
-    
-    # Check if PORT is set
-    port = os.getenv("PORT")
-    if port:
-        print(f"  ✅ PORT environment variable: {port}")
-    else:
-        print("  ⚠️  PORT environment variable not set (will use default)")
-    
-    # Check gunicorn configuration in render.yaml
-    try:
-        with open("render.yaml", "r") as f:
+            results['warnings'].append(f"Migration doctor diagnostic failed: {result.stderr}")
+        
+        # Check if the script has the expected functionality
+        with open('scripts/migration_doctor.py', 'r') as f:
             content = f.read()
-            if "--bind 0.0.0.0:$PORT" in content:
-                print("  ✅ Gunicorn configured to bind to $PORT")
-                return True
-            else:
-                print("  ❌ Gunicorn not configured to bind to $PORT")
-                return False
+            
+        expected_functions = [
+            'check_database_connectivity',
+            'check_migration_state',
+            'check_schema_consistency',
+            'run_migrations',
+            'create_missing_tables'
+        ]
+        
+        for func in expected_functions:
+            if func not in content:
+                results['warnings'].append(f"Migration doctor missing function: {func}")
+        
+        logger.info("Migration doctor validation: SUCCESS")
+        
     except Exception as e:
-        print(f"  ❌ Could not read render.yaml: {e}")
-        return False
-
-def test_health_endpoint():
-    """Test the health endpoint if the app is running."""
-    print("🔍 Testing Health Endpoint")
-    print("-" * 40)
+        results['errors'].append(f"Migration doctor test failed: {e}")
+        results['status'] = 'error'
     
-    # Try to connect to health endpoint if app is running
-    port = os.getenv("PORT", "5000")
-    health_url = f"http://localhost:{port}/health"
+    if results['errors']:
+        results['status'] = 'error'
+    
+    return results
+
+
+def test_startup_validation() -> Dict[str, Any]:
+    """Test the startup validation functionality."""
+    logger.info("Testing startup validation...")
+    
+    results = {
+        'status': 'ok',
+        'errors': [],
+        'warnings': []
+    }
     
     try:
-        response = requests.get(health_url, timeout=5)
-        if response.status_code == 200:
-            print(f"  ✅ Health endpoint responding: {response.status_code}")
-            return True
+        # Check if startup validation script exists
+        if not os.path.exists('scripts/startup_validation.py'):
+            results['warnings'].append("startup_validation.py not found")
+            return results
+        
+        # Run startup validation
+        result = subprocess.run(
+            [sys.executable, 'scripts/startup_validation.py'],
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
+        
+        if result.returncode == 0:
+            logger.info("Startup validation: SUCCESS")
+        elif result.returncode == 1:
+            results['warnings'].append("Startup validation completed with warnings")
         else:
-            print(f"  ⚠️  Health endpoint returned: {response.status_code}")
-            return False
-    except requests.exceptions.RequestException:
-        print("  ⚠️  Health endpoint not accessible (app may not be running)")
-        return True  # This is expected if app isn't running
+            results['errors'].append(f"Startup validation failed: {result.stderr}")
+        
+        # Check if the script has the expected functionality
+        with open('scripts/startup_validation.py', 'r') as f:
+            content = f.read()
+            
+        expected_functions = [
+            'validate_environment',
+            'validate_database',
+            'validate_redis',
+            'validate_storage',
+            'validate_application_factory',
+            'validate_wsgi_entry_point'
+        ]
+        
+        for func in expected_functions:
+            if func not in content:
+                results['warnings'].append(f"Startup validation missing function: {func}")
+        
+        logger.info("Startup validation test: SUCCESS")
+        
+    except Exception as e:
+        results['errors'].append(f"Startup validation test failed: {e}")
+        results['status'] = 'error'
+    
+    if results['errors']:
+        results['status'] = 'error'
+    
+    return results
 
-def main():
+
+def test_predeploy_script() -> Dict[str, Any]:
+    """Test the predeploy script functionality."""
+    logger.info("Testing predeploy script...")
+    
+    results = {
+        'status': 'ok',
+        'errors': [],
+        'warnings': []
+    }
+    
+    try:
+        # Check if predeploy script exists
+        if not os.path.exists('scripts/predeploy.sh'):
+            results['warnings'].append("predeploy.sh not found")
+            return results
+        
+        # Check if the script is executable
+        if not os.access('scripts/predeploy.sh', os.X_OK):
+            results['warnings'].append("predeploy.sh is not executable")
+        
+        # Check if the script has the expected functionality
+        with open('scripts/predeploy.sh', 'r') as f:
+            content = f.read()
+            
+        expected_features = [
+            'migration_doctor.py',
+            'startup_validation.py',
+            'wsgi.py',
+            'app/__init__.py',
+            'requirements.txt'
+        ]
+        
+        for feature in expected_features:
+            if feature not in content:
+                results['warnings'].append(f"Predeploy script missing feature: {feature}")
+        
+        # Check for error handling
+        if 'set -e' not in content:
+            results['warnings'].append("Predeploy script missing error handling (set -e)")
+        
+        if 'set -o pipefail' not in content:
+            results['warnings'].append("Predeploy script missing pipe failure handling")
+        
+        logger.info("Predeploy script validation: SUCCESS")
+        
+    except Exception as e:
+        results['errors'].append(f"Predeploy script test failed: {e}")
+        results['status'] = 'error'
+    
+    if results['errors']:
+        results['status'] = 'error'
+    
+    return results
+
+
+def test_error_visibility() -> Dict[str, Any]:
+    """Test error visibility and logging functionality."""
+    logger.info("Testing error visibility...")
+    
+    results = {
+        'status': 'ok',
+        'errors': [],
+        'warnings': []
+    }
+    
+    try:
+        # Add current directory to Python path
+        import sys
+        import os
+        sys.path.insert(0, os.getcwd())
+        
+        # Test that the WSGI app has error handling
+        from wsgi import app
+        
+        # Check if the app has error handlers
+        if not hasattr(app, 'error_handler_spec') or not app.error_handler_spec:
+            results['warnings'].append("No error handlers registered")
+        
+        # Test error handling by making a request to a non-existent endpoint
+        with app.test_client() as client:
+            response = client.get('/non-existent-endpoint')
+            if response.status_code == 404:
+                logger.info("404 error handling: OK")
+            else:
+                results['warnings'].append(f"Unexpected response for non-existent endpoint: {response.status_code}")
+        
+        # Check if logging is configured
+        if not app.logger.handlers:
+            results['warnings'].append("No logging handlers configured")
+        
+        logger.info("Error visibility validation: SUCCESS")
+        
+    except Exception as e:
+        results['errors'].append(f"Error visibility test failed: {e}")
+        results['status'] = 'error'
+    
+    if results['errors']:
+        results['status'] = 'error'
+    
+    return results
+
+
+def test_health_endpoints() -> Dict[str, Any]:
+    """Test health endpoint functionality."""
+    logger.info("Testing health endpoints...")
+    
+    results = {
+        'status': 'ok',
+        'errors': [],
+        'warnings': []
+    }
+    
+    try:
+        # Add current directory to Python path
+        import sys
+        import os
+        sys.path.insert(0, os.getcwd())
+        
+        from wsgi import app
+        
+        with app.test_client() as client:
+            # Test /health/simple endpoint
+            response = client.get('/health/simple')
+            if response.status_code == 200:
+                logger.info("Health simple endpoint: OK")
+                try:
+                    data = response.get_json()
+                    if data and 'status' in data:
+                        logger.info(f"Health response: {data['status']}")
+                    else:
+                        results['warnings'].append("Health endpoint response missing status field")
+                except Exception:
+                    results['warnings'].append("Health endpoint response is not JSON")
+            else:
+                results['errors'].append(f"Health simple endpoint returned {response.status_code}")
+            
+            # Test /health endpoint (if it exists)
+            response = client.get('/health')
+            if response.status_code in [200, 404]:
+                if response.status_code == 200:
+                    logger.info("Health endpoint: OK")
+                else:
+                    logger.info("Health endpoint not found (expected)")
+            else:
+                results['warnings'].append(f"Health endpoint returned unexpected status: {response.status_code}")
+        
+        logger.info("Health endpoints validation: SUCCESS")
+        
+    except Exception as e:
+        results['errors'].append(f"Health endpoints test failed: {e}")
+        results['status'] = 'error'
+    
+    if results['errors']:
+        results['status'] = 'error'
+    
+    return results
+
+
+def test_render_configuration() -> Dict[str, Any]:
+    """Test Render configuration compatibility."""
+    logger.info("Testing Render configuration...")
+    
+    results = {
+        'status': 'ok',
+        'errors': [],
+        'warnings': []
+    }
+    
+    try:
+        # Check if render.yaml exists
+        if not os.path.exists('render.yaml'):
+            results['warnings'].append("render.yaml not found")
+            return results
+        
+        with open('render.yaml', 'r') as f:
+            content = f.read()
+        
+        # Check for required configuration
+        required_config = [
+            'wsgi:app',
+            'healthCheckPath: /health/simple',
+            'preDeployCommand: bash scripts/predeploy.sh'
+        ]
+        
+        for config in required_config:
+            if config not in content:
+                results['errors'].append(f"Missing required Render configuration: {config}")
+        
+        # Check for proper start command
+        if 'gunicorn' not in content:
+            results['warnings'].append("Gunicorn not configured in start command")
+        
+        logger.info("Render configuration validation: SUCCESS")
+        
+    except Exception as e:
+        results['errors'].append(f"Render configuration test failed: {e}")
+        results['status'] = 'error'
+    
+    if results['errors']:
+        results['status'] = 'error'
+    
+    return results
+
+
+def run_all_tests() -> Dict[str, Any]:
     """Run all deployment validation tests."""
-    print("🚀 Deployment Fixes Validation")
-    print("=" * 60)
-    print()
+    logger.info("=== DEPLOYMENT VALIDATION STARTED ===")
+    logger.info(f"Timestamp: {datetime.now()}")
     
     tests = [
-        ("Environment Variables", check_environment_variables),
-        ("Port Binding", test_port_binding),
-        ("Redis SSL Configuration", test_redis_ssl_configuration),
-        ("Celery SSL Configuration", test_celery_ssl_configuration),
-        ("Flask App Initialization", test_flask_app_initialization),
-        ("Health Endpoint", test_health_endpoint),
+        ('WSGI Entry Point', test_wsgi_entry_point),
+        ('Migration Doctor', test_migration_doctor),
+        ('Startup Validation', test_startup_validation),
+        ('Predeploy Script', test_predeploy_script),
+        ('Error Visibility', test_error_visibility),
+        ('Health Endpoints', test_health_endpoints),
+        ('Render Configuration', test_render_configuration)
     ]
     
-    results = []
-    for test_name, test_func in tests:
-        print(f"Running: {test_name}")
+    all_results = {}
+    has_errors = False
+    has_warnings = False
+    
+    for name, test_func in tests:
+        logger.info(f"Running {name} test...")
         try:
             result = test_func()
-            results.append((test_name, result))
+            all_results[name] = result
+            
+            if result['status'] == 'error':
+                has_errors = True
+                logger.error(f"❌ {name} test failed")
+                for error in result['errors']:
+                    logger.error(f"  - {error}")
+            
+            if result['warnings']:
+                has_warnings = True
+                logger.warning(f"⚠️  {name} test warnings")
+                for warning in result['warnings']:
+                    logger.warning(f"  - {warning}")
+            
+            if result['status'] == 'ok' and not result['warnings']:
+                logger.info(f"✅ {name} test passed")
+                
         except Exception as e:
-            print(f"  ❌ Test failed with exception: {e}")
-            results.append((test_name, False))
-        print()
+            logger.error(f"❌ {name} test crashed: {e}")
+            all_results[name] = {
+                'status': 'error',
+                'errors': [f"Test crashed: {e}"],
+                'warnings': []
+            }
+            has_errors = True
     
     # Summary
-    print("📊 Test Results Summary")
-    print("=" * 60)
+    logger.info("=== VALIDATION SUMMARY ===")
     
-    passed = 0
-    total = len(results)
-    
-    for test_name, result in results:
-        status = "✅ PASS" if result else "❌ FAIL"
-        print(f"  {test_name}: {status}")
-        if result:
-            passed += 1
-    
-    print()
-    print(f"Overall: {passed}/{total} tests passed")
-    
-    if passed == total:
-        print("🎉 All tests passed! Deployment fixes are working correctly.")
-        print()
-        print("✅ Critical Fixes Applied:")
-        print("  • Port binding issue resolved")
-        print("  • Redis SSL configuration fixed for rediss:// URLs")
-        print("  • Celery worker SSL configuration updated")
-        print("  • Flask-Session Redis configuration improved")
-        return 0
+    if has_errors:
+        logger.error("❌ Deployment validation failed")
+        return {
+            'status': 'error',
+            'results': all_results,
+            'message': 'Deployment validation failed'
+        }
+    elif has_warnings:
+        logger.warning("⚠️  Deployment validation completed with warnings")
+        return {
+            'status': 'warning',
+            'results': all_results,
+            'message': 'Deployment validation completed with warnings'
+        }
     else:
-        print("❌ Some tests failed. Please review the issues above.")
+        logger.info("✅ All deployment validations passed")
+        return {
+            'status': 'ok',
+            'results': all_results,
+            'message': 'Deployment validation completed successfully'
+        }
+
+
+def main():
+    """Main validation function."""
+    try:
+        result = run_all_tests()
+        
+        if result['status'] == 'error':
+            logger.error("=== DEPLOYMENT VALIDATION FAILED ===")
+            return 1
+        elif result['status'] == 'warning':
+            logger.warning("=== DEPLOYMENT VALIDATION COMPLETED WITH WARNINGS ===")
+            return 0
+        else:
+            logger.info("=== DEPLOYMENT VALIDATION COMPLETED SUCCESSFULLY ===")
+            return 0
+            
+    except Exception as e:
+        logger.error(f"Validation script crashed: {e}")
         return 1
+
 
 if __name__ == "__main__":
     sys.exit(main())

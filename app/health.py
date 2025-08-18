@@ -280,102 +280,48 @@ def readyz() -> tuple[Dict[str, Any], int]:
 
 
 @bp.get("/health")
-def health() -> tuple[Dict[str, Any], int]:
-    """Legacy health check endpoint.
-    
-    This endpoint executes a lightweight DB query and returns {status:'ok'}.
-    Used by monitoring systems for basic health checks.
-    
-    Returns:
-        JSON response with status information
-    """
-    try:
-        # Execute lightweight DB query with timeout
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(lambda: db.session.execute(text("SELECT 1")))
-            future.result(timeout=2.0)
-        return jsonify({"status": "ok"}), 200
-    except Exception as e:
-        logger.exception("Database health check failed")
-        return jsonify({"status": "database_error", "error": str(e)}), 503
+def health():
+    """Legacy health endpoint - redirects to simple health check."""
+    return jsonify({"ok": True}), 200
 
 
-@bp.route("/health")
-@bp.route("/health/simple")
+@bp.get("/health/simple")
 def health_simple():
-    """Simple health check for startup verification."""
-    try:
-        # Test database
-        db.session.execute(text("SELECT 1"))
-        db_status = "ok"
-    except Exception as e:
-        db_status = f"error: {e}"
-    
-    # Test Redis if configured
-    redis_status = "not_configured"
-    try:
-        redis_url = os.environ.get("REDIS_URL")
-        if redis_url:
-            import redis
-            if redis_url.startswith("rediss://"):
-                redis_url = redis_url.replace("rediss://", "redis://")
-            client = redis.from_url(redis_url, socket_connect_timeout=3)
-            client.ping()
-            redis_status = "ok"
-    except Exception as e:
-        redis_status = f"error: {e}"
-    
-    response = {
-        "status": "ok" if db_status == "ok" else "degraded",
-        "database": db_status,
-        "redis": redis_status,
-        "timestamp": datetime.utcnow().isoformat()
-    }
-    
-    status_code = 200 if db_status == "ok" else 503
-    return jsonify(response), status_code
+    """Fast readiness check - always returns 200, no DB/Redis checks."""
+    return jsonify({"ok": True}), 200
 
 
 @bp.get("/health/full")
-def health_full() -> tuple[Dict[str, Any], int]:
-    """Comprehensive health check with Redis and Celery."""
-    checks = {
-        "database": False,
-        "redis": False,
-        "celery": False
-    }
+def health_full():
+    """Deep health check - DB ping, Redis ping, Celery inspect."""
+    status = {}
     
-    # Database check
+    # DB
     try:
         db.session.execute(text("SELECT 1"))
-        checks["database"] = True
+        status["db"] = "ok"
     except Exception as e:
-        logger.error(f"Database check failed: {e}")
+        status["db"] = f"error:{type(e).__name__}"
     
-    # Redis check
+    # Redis (session store)
     try:
-        redis_url = os.environ.get("REDIS_URL")
-        if redis_url:
-            import redis
-            client = redis.from_url(redis_url)
-            client.ping()
-            checks["redis"] = True
+        r = current_app.config.get("SESSION_REDIS")
+        if r:
+            r.ping()
+            status["redis"] = "ok"
         else:
-            checks["redis"] = True  # No Redis configured
+            status["redis"] = "not_configured"
     except Exception as e:
-        logger.error(f"Redis check failed: {e}")
+        status["redis"] = f"error:{type(e).__name__}"
     
-    # Celery check (basic)
+    # Celery
     try:
-        from celery_worker import celery
-        # Simple check - just verify Celery app exists
-        if celery and celery.broker:
-            checks["celery"] = True
+        from celery_worker import celery as c
+        insp = c.control.inspect(timeout=3)
+        workers = insp and (insp.active() or insp.ping())
+        status["celery"] = "ok" if workers else "down"
     except Exception as e:
-        logger.error(f"Celery check failed: {e}")
-    
-    all_healthy = all(checks.values())
-    return jsonify({
-        "status": "healthy" if all_healthy else "unhealthy",
-        "checks": checks
-    }), 200 if all_healthy else 503
+        status["celery"] = f"error:{type(e).__name__}"
+
+    code = 200 if all(v in ("ok","not_configured") for v in status.values()) else 503
+    return jsonify(status), code

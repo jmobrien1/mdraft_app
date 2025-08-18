@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 import uuid
 
 from ..models import User, EmailVerificationToken
-from .. import db, limiter
+from ..extensions import db, limiter
 from ..config import get_config
 from ..utils.password import validate_password_strength
 from ..utils.rate_limiting import create_auth_rate_limiter, get_client_ip, get_login_rate_limit_key

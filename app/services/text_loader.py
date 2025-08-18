@@ -17,7 +17,7 @@ from flask import current_app
 from .storage import Storage
 from ..models import Job
 from ..models_conversion import Conversion
-from .. import db
+from ..extensions import db
 
 
 def get_rfp_text(document_id: str) -> str:

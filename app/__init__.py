@@ -21,14 +21,6 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 from flask import Flask, has_request_context, request
-from flask_sqlalchemy import SQLAlchemy
-from flask_migrate import Migrate
-from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
-from flask_bcrypt import Bcrypt
-from flask_login import LoginManager
-from flask_wtf.csrf import CSRFProtect
-from flask_session import Session
 from sqlalchemy import text
 
 # Import centralized configuration
@@ -37,42 +29,21 @@ from .config import get_config, ConfigurationError
 # Import structured logging
 from .utils.logging import setup_logging, StructuredJSONFormatter
 
-# Initialise extensions without an application context.  They will be
-# bound to the app inside create_app().
-db: SQLAlchemy = SQLAlchemy()
-migrate: Migrate = Migrate()
-bcrypt: Bcrypt = Bcrypt()
-login_manager: LoginManager = LoginManager()
-csrf: CSRFProtect = CSRFProtect()
-# Note: session will be initialized after configuration is set
-session: Optional[Session] = None
-
-# GLOBAL limiter (exported as app.limiter so routes can import it)
-# Initialize with safe defaults - will be configured during app creation
-limiter = Limiter(
-    key_func=get_remote_address,
-    default_limits=["120 per minute"],
+# Import extensions
+from .extensions import (
+    db, migrate, bcrypt, login_manager, csrf, session,
+    limiter, conditional_limit, init_extensions
 )
 
-# Global flag to track if limiter is properly initialized
-_limiter_initialized = False
+# Import models for user loader
+from .models import User
+import uuid
 
 # Register models with SQLAlchemy metadata so Alembic can see them
 from .models_conversion import Conversion  # noqa: F401
 from .models_apikey import ApiKey  # noqa: F401
 
-# Helper function for conditional rate limiting
-def conditional_limit(limit_string: str):
-    """Apply rate limit only if limiter is enabled."""
-    try:
-        if _limiter_initialized and limiter and limiter.default_limits:
-            return limiter.limit(limit_string)
-    except Exception:
-        # If limiter.limit() fails, fall back to no-op
-        pass
-    return lambda f: f  # No-op decorator
-
-# Export conditional_limit for use in other modules
+# Export extensions for use in other modules
 __all__ = ['limiter', 'conditional_limit', 'db', 'migrate', 'bcrypt', 'login_manager', 'csrf', 'session']
 
 
@@ -145,85 +116,70 @@ def create_app() -> Flask:
             logger.error(f"Database configuration failed: {e}")
             raise
         
-        # Initialize database FIRST
+        # Initialize extensions FIRST
         try:
-            db.init_app(app)
-            migrate.init_app(app, db)
-            logger.info("Database extensions initialized")
+            init_extensions(app)
+            logger.info("Extensions initialized")
             
             # Test database connection
             with app.app_context():
                 db.session.execute(text("SELECT 1"))
                 logger.info("Database connection verified")
         except Exception as e:
-            logger.error(f"Database initialization failed: {e}")
+            logger.error(f"Extension initialization failed: {e}")
             raise
         
-        # Initialize Redis with complete fallback
-        redis_client = None
-        try:
-            redis_url = ENV.get("REDIS_URL") or ENV.get("SESSION_REDIS_URL")
-            if redis_url:
-                # Ensure correct scheme
-                if redis_url.startswith("rediss://"):
-                    logger.warning("Converting rediss:// to redis://")
-                    redis_url = redis_url.replace("rediss://", "redis://")
-                
-                import redis
-                redis_client = redis.from_url(redis_url, socket_connect_timeout=5)
-                redis_client.ping()
-                logger.info("Redis connection established")
-            else:
-                logger.warning("No Redis URL configured")
-        except Exception as e:
-            logger.warning(f"Redis connection failed: {e}")
-            redis_client = None
+        # Harden session initialization - Redis misconfig never crashes startup
+        from redis import Redis
+        import os
         
-        # Session configuration with fallback
+        url = os.getenv("SESSION_REDIS_URL") or os.getenv("REDIS_URL")
+        if url:
+            try:
+                app.config["SESSION_TYPE"] = "redis"
+                app.config["SESSION_REDIS"] = Redis.from_url(url)
+                # Non-fatal probe
+                try:
+                    app.config["SESSION_REDIS"].ping()
+                    logger.info("Redis session store configured and reachable")
+                except Exception:
+                    logger.warning("Session Redis unreachable; falling back to filesystem")
+                    app.config["SESSION_TYPE"] = "filesystem"
+            except Exception:
+                logger.exception("Failed to init Redis session; falling back to filesystem")
+                app.config["SESSION_TYPE"] = "filesystem"
+        else:
+            app.config["SESSION_TYPE"] = "filesystem"
+            logger.info("No Redis URL configured; using filesystem sessions")
+        
+        # Set additional session configuration
+        app.config.update(
+            SESSION_USE_SIGNER=True,
+            SESSION_KEY_PREFIX='mdraft:sess:',
+            SESSION_PERMANENT=False
+        )
+        
+        # Initialize Flask-Session
         try:
-            if redis_client:
-                app.config.update(
-                    SESSION_TYPE='redis',
-                    SESSION_REDIS=redis_client,
-                    SESSION_USE_SIGNER=True,
-                    SESSION_KEY_PREFIX='mdraft:sess:',
-                    SESSION_PERMANENT=False
-                )
-                logger.info("Using Redis for sessions")
-            else:
-                app.config.update(
-                    SESSION_TYPE='filesystem',
-                    SESSION_USE_SIGNER=True,
-                    SESSION_PERMANENT=False
-                )
-                logger.info("Using filesystem for sessions")
-            
             from flask_session import Session
             Session(app)
-            logger.info("Flask-Session initialized")
+            logger.info("Flask-Session initialized successfully")
         except Exception as e:
-            logger.error(f"Session initialization failed: {e}")
-            # Continue without sessions
+            logger.error(f"Flask-Session initialization failed: {e}")
+            # Continue without sessions - app will still work
         
-        # Rate limiting with fallback
-        try:
-            limiter_storage = redis_url if redis_client else "memory://"
-            limiter.init_app(app)
-            logger.info(f"Rate limiting initialized with {limiter_storage}")
-        except Exception as e:
-            logger.warning(f"Rate limiting initialization failed: {e}")
-        
-        # Initialize other extensions
-        try:
-            bcrypt.init_app(app)
-            login_manager.init_app(app)
-            logger.info("Authentication extensions initialized")
-        except Exception as e:
-            logger.error(f"Auth extension initialization failed: {e}")
-            raise
+        # Rate limiting is now handled by init_extensions()
+        logger.info("Rate limiting configured during extension initialization")
         
         # Register blueprints with error handling
         blueprint_errors = []
+        try:
+            from .auth.routes import bp as auth_bp
+            app.register_blueprint(auth_bp)
+            logger.info("Auth blueprint registered")
+        except Exception as e:
+            blueprint_errors.append(f"Auth blueprint: {e}")
+        
         try:
             from .ui import bp as ui_bp
             app.register_blueprint(ui_bp)
@@ -256,6 +212,47 @@ def create_app() -> Flask:
             @app.route('/')
             def fallback_root():
                 return {"status": "running", "note": "degraded mode"}
+        
+        # Initialize Flask-Login user loader
+        @login_manager.user_loader
+        def load_user(user_id: str):
+            """Resilient user loader that supports UUID or int PKs."""
+            if not user_id:
+                return None
+            
+            # Try integer PK first (since User model uses int primary key)
+            try:
+                key = int(user_id)
+                # SQLAlchemy 2.x preferred, with fallback
+                try:
+                    obj = db.session.get(User, key)
+                    if obj is None:
+                        # Fallback to legacy query
+                        obj = User.query.get(key)
+                except Exception:
+                    try:
+                        obj = User.query.get(key)  # legacy
+                    except Exception:
+                        obj = None
+                return obj
+            except ValueError:
+                # Try UUID as fallback (for future models that might use UUID)
+                try:
+                    key = uuid.UUID(user_id)
+                    # SQLAlchemy 2.x preferred, with fallback
+                    try:
+                        obj = db.session.get(User, key)
+                        if obj is None:
+                            # Fallback to legacy query
+                            obj = User.query.get(key)
+                    except Exception:
+                        try:
+                            obj = User.query.get(key)  # legacy
+                        except Exception:
+                            obj = None
+                    return obj
+                except ValueError:
+                    return None
         
         logger.info("=== Flask App Factory Completed Successfully ===")
         return app

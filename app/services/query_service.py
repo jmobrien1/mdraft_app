@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import selectinload, joinedload
 from sqlalchemy import and_, or_, desc, asc
 
-from .. import db
+from ..extensions import db
 from ..models import Job, User, JobStatus
 from ..models_conversion import Conversion, ConversionStatus
 

@@ -171,7 +171,7 @@ def migration_status():
     """
     try:
         from sqlalchemy import text, inspect
-        from .. import db
+        from ..extensions import db
         
         # Get alembic head
         alembic_head = None
