@@ -22,7 +22,8 @@ from sqlalchemy.exc import IntegrityError
 from werkzeug.utils import secure_filename
 
 from . import db
-from .models import Conversion, User
+from .models_conversion import Conversion
+from .models import User
 from .services import Storage
 from .celery_tasks import enqueue_conversion_task
 from .utils.authz import allow_session_or_api_key

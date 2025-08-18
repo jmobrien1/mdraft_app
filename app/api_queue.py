@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify
-from celery_worker import celery
+from celery_worker import celery_app as celery
 
 bp = Blueprint("api_queue", __name__, url_prefix="/api/queue")
 

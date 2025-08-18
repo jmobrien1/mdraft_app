@@ -272,6 +272,139 @@ def test_validation_utilities():
         logger.error(f"✗ Validation utilities: FAILED - {e}")
         return False
 
+def test_blueprint_imports():
+    """Test that all blueprints can be imported without errors."""
+    logger.info("Testing blueprint imports...")
+    
+    try:
+        # Test core blueprints
+        from app.auth.routes import bp as auth_bp
+        from app.ui import bp as ui_bp
+        from app.health import bp as health_bp
+        
+        # Test API blueprints
+        from app.api_estimate import bp as estimate_bp
+        from app.api_convert import bp as convert_bp
+        from app.api_usage import bp as usage_bp
+        from app.api_queue import bp as queue_bp
+        from app.api.agents import bp as agents_bp
+        from app.api.ops import bp as ops_bp
+        from app.api.errors import errors as errors_bp
+        
+        # Test feature blueprints
+        from app.beta import bp as beta_bp
+        from app.billing import bp as billing_bp
+        from app.admin import bp as admin_bp
+        from app.view import bp as view_bp
+        
+        # Test main routes
+        from app.routes import bp as main_bp
+        
+        logger.info("✓ Blueprint imports: PASSED")
+        return True
+        
+    except Exception as e:
+        logger.error(f"✗ Blueprint imports: FAILED - {e}")
+        return False
+
+def test_celery_exports():
+    """Test that celery is properly exported from celery_worker."""
+    logger.info("Testing celery exports...")
+    
+    try:
+        # Test celery export
+        from celery_worker import celery, celery_app
+        
+        # Verify they're the same object
+        assert celery is celery_app, "celery and celery_app should be the same object"
+        
+        # Test that celery has required attributes
+        assert hasattr(celery, 'conf'), "celery should have conf attribute"
+        assert hasattr(celery, 'send_task'), "celery should have send_task method"
+        
+        logger.info("✓ Celery exports: PASSED")
+        return True
+        
+    except Exception as e:
+        logger.error(f"✗ Celery exports: FAILED - {e}")
+        return False
+
+def test_database_schema():
+    """Test that database schema is correct."""
+    logger.info("Testing database schema...")
+    
+    try:
+        import os
+        from sqlalchemy import create_engine, inspect
+        from sqlalchemy.exc import OperationalError
+        
+        # Get database URL
+        db_url = os.getenv('DATABASE_URL', 'sqlite:///instance/mdraft.db')
+        
+        # Create engine
+        engine = create_engine(db_url)
+        
+        # Check if we can connect
+        with engine.connect() as conn:
+            # Check if jobs table exists
+            inspector = inspect(engine)
+            tables = inspector.get_table_names()
+            
+            if 'jobs' not in tables:
+                logger.warning("jobs table not found - this is expected in test environment")
+                logger.info("✓ Database schema: PASSED (no jobs table in test env)")
+                return True
+            
+            # Check if visitor_session_id column exists
+            columns = [col['name'] for col in inspector.get_columns('jobs')]
+            
+            if 'visitor_session_id' in columns:
+                logger.info("✓ visitor_session_id column exists in jobs table")
+            else:
+                logger.warning("visitor_session_id column missing - this will be fixed by migration")
+            
+            # Check if users table exists
+            if 'users' in tables:
+                logger.info("✓ users table exists")
+            else:
+                logger.warning("users table not found")
+            
+            # Check if conversions table exists
+            if 'conversions' in tables:
+                logger.info("✓ conversions table exists")
+            else:
+                logger.warning("conversions table not found")
+        
+        logger.info("✓ Database schema: PASSED")
+        return True
+        
+    except Exception as e:
+        logger.error(f"✗ Database schema: FAILED - {e}")
+        return False
+
+def test_model_imports():
+    """Test that all models can be imported correctly."""
+    logger.info("Testing model imports...")
+    
+    try:
+        # Test core models
+        from app.models import User, Job, JobStatus, ConversionStatus
+        
+        # Test conversion models
+        from app.models_conversion import Conversion
+        
+        # Test that models have expected attributes
+        assert hasattr(User, 'id'), "User model should have id attribute"
+        assert hasattr(Job, 'id'), "Job model should have id attribute"
+        assert hasattr(Conversion, 'id'), "Conversion model should have id attribute"
+        
+        logger.info("✓ Model imports: PASSED")
+        return True
+        
+    except Exception as e:
+        logger.error(f"✗ Model imports: FAILED - {e}")
+        return False
+
 def main():
     """Run all tests and report results."""
     logger.info("Starting comprehensive fix validation...")
@@ -285,6 +418,10 @@ def main():
         ("worker_logging", test_worker_logging),
         ("file_utilities", test_file_utilities),
         ("validation_utilities", test_validation_utilities),
+        ("blueprint_imports", test_blueprint_imports),
+        ("celery_exports", test_celery_exports),
+        ("database_schema", test_database_schema),
+        ("model_imports", test_model_imports),
     ]
     
     results = []

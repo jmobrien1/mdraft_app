@@ -14,9 +14,9 @@ from datetime import datetime
 from flask import Blueprint, request, jsonify, current_app
 from werkzeug.utils import secure_filename
 
-from ..utils.csrf import csrf_exempt_for_api
-from ..utils.files import is_file_allowed, get_file_size
-from ..utils.validation import validate_file_upload
+from app.utils.csrf import csrf_exempt_for_api
+from app.utils.files import is_file_allowed, get_file_size
+from app.utils.validation import validate_file_upload
 
 logger = logging.getLogger(__name__)
 

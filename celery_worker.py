@@ -63,6 +63,9 @@ def create_celery_app() -> Celery:
 # Create Celery app
 celery_app = create_celery_app()
 
+# Export celery for backward compatibility
+celery = celery_app
+
 # Signal handlers for graceful shutdown
 @worker_init.connect
 def worker_init_handler(sender: Any, **kwargs: Any) -> None:
