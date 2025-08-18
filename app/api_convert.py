@@ -320,16 +320,23 @@ def api_upload():
         else:
             return jsonify(error_response), 400
 
+    current_app.logger.info("Processing filename and callback URL...")
     filename = secure_filename(file.filename or "upload.bin")
+    current_app.logger.info(f"Secure filename: {filename}")
+    
     callback_url = (
         request.form.get("callback_url")
         or request.args.get("callback_url")
         or (request.json or {}).get("callback_url") if request.is_json else None
     )
+    current_app.logger.info(f"Callback URL: {callback_url}")
     
     # Validate callback URL
     if callback_url and not (callback_url.startswith("http://") or callback_url.startswith("https://")):
+        current_app.logger.warning(f"Invalid callback URL: {callback_url}")
         return jsonify(error="invalid_callback_url"), 400
+    
+    current_app.logger.info("Callback URL validation passed")
 
     # Save file temporarily for processing
     current_app.logger.info("Saving file to temporary location...")
