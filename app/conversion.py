@@ -374,23 +374,41 @@ def process_job(job_id: int, gcs_uri: str) -> str:
     
     # Download file from storage to temp
     try:
-        from .storage_adapter import read_file_bytes, file_exists
-        
-        # Check if file exists in storage
-        if not file_exists(gcs_uri):
-            logger.error(f"File not found in storage for job {job_id}: {gcs_uri}")
-            raise FileNotFoundError(f"File not found in storage: {gcs_uri}")
-        
-        # Read file data from storage
-        file_data = read_file_bytes(gcs_uri)
-        
-        # Write to temporary file for processing
-        import tempfile
-        temp_fd, input_path = tempfile.mkstemp(suffix=f"_{job.filename}")
-        with os.fdopen(temp_fd, 'wb') as f:
-            f.write(file_data)
-        
-        logger.info(f"Downloaded {gcs_uri} to temporary file {input_path}")
+        # Handle different storage backends
+        if gcs_uri.startswith("gs://"):
+            # GCS storage
+            from google.cloud import storage
+            
+            # Parse GCS URI
+            bucket_name = gcs_uri.split("/")[2]
+            blob_name = "/".join(gcs_uri.split("/")[3:])
+            
+            # Initialize GCS client
+            client = storage.Client()
+            bucket = client.bucket(bucket_name)
+            blob = bucket.blob(blob_name)
+            
+            # Check if file exists
+            if not blob.exists():
+                logger.error(f"File not found in GCS for job {job_id}: {gcs_uri}")
+                raise FileNotFoundError(f"File not found in GCS: {gcs_uri}")
+            
+            # Download to temporary file
+            import tempfile
+            temp_fd, input_path = tempfile.mkstemp(suffix=f"_{job.filename}")
+            with os.fdopen(temp_fd, 'wb') as f:
+                blob.download_to_file(f)
+            
+            logger.info(f"Downloaded {gcs_uri} to temporary file {input_path}")
+        else:
+            # Local storage
+            if not os.path.exists(gcs_uri):
+                logger.error(f"File not found in local storage for job {job_id}: {gcs_uri}")
+                raise FileNotFoundError(f"File not found in local storage: {gcs_uri}")
+            
+            # Use the local file directly
+            input_path = gcs_uri
+            logger.info(f"Using local file {gcs_uri} for job {job_id}")
     except Exception as e:
         logger.error(f"Failed to download file for job {job_id}: {e}")
         raise

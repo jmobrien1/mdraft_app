@@ -180,3 +180,10 @@ def estimate() -> Any:
             "pages": pages,
             "est_cost_usd": est_cost_usd
         })
+
+# CSRF exemption for multipart uploads
+try:
+    from app.extensions import csrf
+    csrf.exempt(bp)
+except Exception:
+    pass

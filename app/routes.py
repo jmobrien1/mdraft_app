@@ -879,3 +879,10 @@ def debug_env():
             redis_vars[f"{key}_has_trailing_space"] = value != value.strip()
     
     return jsonify(redis_vars)
+
+# CSRF exemption for multipart uploads
+try:
+    from app.extensions import csrf
+    csrf.exempt(bp)
+except Exception:
+    pass

@@ -93,6 +93,14 @@ def create_app() -> Flask:
         app = Flask(__name__)
         logger.info("Flask instance created")
         
+        # Runtime check for key modules
+        for _mod in ("pypdf", "google.cloud.storage"):
+            try:
+                __import__(_mod.replace(".", "_") if _mod=="google.cloud.storage" else _mod)
+                app.logger.info("%s: OK", _mod)
+            except Exception as e:
+                app.logger.warning("%s missing: %s", _mod, e)
+        
         # Load configuration with error handling
         try:
             app.config["SECRET_KEY"] = ENV.get("SECRET_KEY", "changeme")
@@ -176,13 +184,13 @@ def create_app() -> Flask:
         # Rate limiting is now handled by init_extensions()
         logger.info("Rate limiting configured during extension initialization")
         
-        # Initialize storage adapter
+        # Initialize storage with fallback
         try:
-            from .storage_adapter import init_storage
+            from .storage import init_storage
             init_storage(app)
-            logger.info("Storage adapter initialized")
+            logger.info("Storage initialized with fallback")
         except Exception as e:
-            logger.error(f"Storage adapter initialization failed: {e}")
+            logger.error(f"Storage initialization failed: {e}")
             # Continue without storage - app will still work
         
         # Log critical dependency versions for build reliability

@@ -329,24 +329,27 @@ def api_upload():
             # Use the old non-atomic path for forced uploads
             return _legacy_upload_handler(tmp_path, filename, file_hash, original_mime, original_size, callback_url)
 
-        # Upload file using storage adapter (GCS or local fallback)
+        # Upload file using storage with fallback
         try:
-            from .storage_adapter import save_file
+            from flask import current_app
             
             # Reset file stream position for upload
             file.stream.seek(0)
             
-            # Save file using storage adapter
-            current_app.logger.info(f"Attempting to save file {filename} using storage adapter")
-            storage_result = save_file(file, subdir="uploads")
-            current_app.logger.info(f"Storage result: {storage_result}")
+            # Get storage backend
+            kind, handle = current_app.extensions.get("storage", ("local", None))
             
-            # Get storage URI based on backend
-            if storage_result["backend"] == "gcs":
-                gcs_uri = storage_result["uri"]
+            if kind == "gcs":
+                from werkzeug.utils import secure_filename
+                blob_name = secure_filename(file.filename or "upload.bin")
+                client, bucket = handle
+                blob = bucket.blob(f"uploads/{blob_name}")
+                blob.upload_from_file(file.stream, rewind=True)
+                source_ref = {"backend":"gcs","bucket":bucket.name,"blob":blob.name}
+                gcs_uri = f"gs://{bucket.name}/{blob.name}"
             else:
-                # For local storage, use the file path
-                gcs_uri = storage_result["path"]
+                source_ref = handle.save(file)  # {"backend":"local","path":..., "name":...}
+                gcs_uri = source_ref["path"]
             
             current_app.logger.info(f"Using storage URI: {gcs_uri}")
 
@@ -664,3 +667,10 @@ def list_conversions():
     except Exception as e:
         current_app.logger.exception("/api/conversions failed")
         return jsonify({"error":"conversions_failed","detail":str(e)[:200]}), 500
+
+# CSRF exemption for multipart uploads
+try:
+    from app.extensions import csrf
+    csrf.exempt(bp)
+except Exception:
+    pass
