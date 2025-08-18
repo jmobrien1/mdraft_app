@@ -176,6 +176,15 @@ def create_app() -> Flask:
         # Rate limiting is now handled by init_extensions()
         logger.info("Rate limiting configured during extension initialization")
         
+        # Initialize storage adapter
+        try:
+            from .storage_adapter import init_storage
+            init_storage(app)
+            logger.info("Storage adapter initialized")
+        except Exception as e:
+            logger.error(f"Storage adapter initialization failed: {e}")
+            # Continue without storage - app will still work
+        
         # Log critical dependency versions for build reliability
         logger.info("=== Dependency Version Check ===")
         try:

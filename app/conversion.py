@@ -353,7 +353,6 @@ def process_job(job_id: int, gcs_uri: str) -> str:
         Markdown content as string.
     """
     import time
-    from .services import Storage
     
     logger = current_app.logger
     start_time = time.time()
@@ -375,15 +374,15 @@ def process_job(job_id: int, gcs_uri: str) -> str:
     
     # Download file from storage to temp
     try:
-        storage = Storage()
+        from .storage_adapter import read_file_bytes, file_exists
         
         # Check if file exists in storage
-        if not storage.exists(gcs_uri):
+        if not file_exists(gcs_uri):
             logger.error(f"File not found in storage for job {job_id}: {gcs_uri}")
             raise FileNotFoundError(f"File not found in storage: {gcs_uri}")
         
         # Read file data from storage
-        file_data = storage.read_bytes(gcs_uri)
+        file_data = read_file_bytes(gcs_uri)
         
         # Write to temporary file for processing
         import tempfile

@@ -104,14 +104,13 @@ def _atomic_upload_handler(file_hash: str, filename: str, original_mime: str,
         
         where_clause = " AND ".join(where_conditions)
         
-        # SELECT ... FOR UPDATE to lock any existing conversion
+        # SELECT existing conversion (SQLite doesn't support FOR UPDATE)
+        sql_query = f"SELECT id, status, filename, markdown FROM conversions WHERE {where_clause}"
+        current_app.logger.info(f"Executing SQL query: {sql_query}")
+        current_app.logger.info(f"With parameters: {params}")
+        
         result = db.session.execute(
-            text(f"""
-                SELECT id, status, filename, markdown 
-                FROM conversions 
-                WHERE {where_clause}
-                FOR UPDATE
-            """),
+            text(sql_query),
             params
         ).fetchone()
         
@@ -330,16 +329,26 @@ def api_upload():
             # Use the old non-atomic path for forced uploads
             return _legacy_upload_handler(tmp_path, filename, file_hash, original_mime, original_size, callback_url)
 
-        # Upload to GCS for async processing
+        # Upload file using storage adapter (GCS or local fallback)
         try:
-            from google.cloud import storage
-            bucket_name = os.environ["GCS_BUCKET_NAME"]
-            client = storage.Client()
-            bucket = client.bucket(bucket_name)
-            object_key = f"uploads/{uuid.uuid4()}-{filename}"
-            blob = bucket.blob(object_key)
-            blob.upload_from_filename(tmp_path)
-            gcs_uri = f"gs://{bucket_name}/{object_key}"
+            from .storage_adapter import save_file
+            
+            # Reset file stream position for upload
+            file.stream.seek(0)
+            
+            # Save file using storage adapter
+            current_app.logger.info(f"Attempting to save file {filename} using storage adapter")
+            storage_result = save_file(file, subdir="uploads")
+            current_app.logger.info(f"Storage result: {storage_result}")
+            
+            # Get storage URI based on backend
+            if storage_result["backend"] == "gcs":
+                gcs_uri = storage_result["uri"]
+            else:
+                # For local storage, use the file path
+                gcs_uri = storage_result["path"]
+            
+            current_app.logger.info(f"Using storage URI: {gcs_uri}")
 
             # Get owner fields and TTL
             ttl_days = int(os.getenv("RETENTION_DAYS", "30"))
@@ -347,13 +356,14 @@ def api_upload():
             
             # Use atomic upload handler
             return _atomic_upload_handler(
-                file_hash, filename, original_mime, original_size, 
+                file_hash, filename, original_mime, original_size,
                 gcs_uri, owner_fields, ttl_days, callback_url
             )
 
         except Exception as e:
             current_app.logger.exception("Upload failed: %s", e)
-            return jsonify({"error": "server_error"}), 500
+            current_app.logger.error(f"Upload error details: {type(e).__name__}: {str(e)}")
+            return jsonify({"error": "server_error", "detail": str(e)[:200]}), 500
 
     finally:
         try: 
