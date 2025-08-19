@@ -15,6 +15,7 @@ from enum import Enum
 
 from flask_login import UserMixin
 from sqlalchemy import Integer, String, DateTime, Text, ForeignKey, Boolean, CheckConstraint, Enum as SQLAlchemyEnum
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship, selectinload, joinedload
 
 from .extensions import db
@@ -249,7 +250,7 @@ class ProposalDocument(db.Model):
     parsed_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     section_mapping: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON mapping of UCF sections
     ingestion_status: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # queued, processing, ready, error
-    available_sections: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON array of available sections
+    available_sections: Mapped[Optional[list[str]]] = mapped_column(ARRAY(Text), nullable=True, server_default=db.text("'{}'::text[]"))  # Array of available sections
     ingestion_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Error message if ingestion failed
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

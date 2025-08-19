@@ -24,7 +24,7 @@ BEGIN
         AND column_name = 'available_sections'
     ) THEN
         ALTER TABLE proposal_documents 
-        ADD COLUMN available_sections TEXT[] NOT NULL DEFAULT '{}';
+        ADD COLUMN available_sections TEXT[] NOT NULL DEFAULT '{}'::text[];
         RAISE NOTICE 'Added available_sections column';
     ELSE
         RAISE NOTICE 'available_sections column already exists';

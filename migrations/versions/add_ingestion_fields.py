@@ -20,8 +20,8 @@ def upgrade():
     # Add ingestion status field with default
     op.add_column('proposal_documents', sa.Column('ingestion_status', sa.String(20), nullable=False, server_default='none'))
     
-    # Add available sections field (JSON array) with default
-    op.add_column('proposal_documents', sa.Column('available_sections', postgresql.JSONB(), nullable=False, server_default='[]'))
+    # Add available sections field (TEXT array) with default
+    op.add_column('proposal_documents', sa.Column('available_sections', postgresql.ARRAY(sa.Text()), nullable=False, server_default="'{}'::text[]"))
     
     # Add ingestion error field
     op.add_column('proposal_documents', sa.Column('ingestion_error', sa.Text(), nullable=True))
