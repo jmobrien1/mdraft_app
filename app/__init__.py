@@ -223,11 +223,11 @@ def create_app() -> Flask:
         
         # Initialize storage with fallback
         try:
-            from .storage import init_storage
+            from .storage_adapter import init_storage
             init_storage(app)
-            logger.info("Storage initialized with fallback")
+            logger.info("Storage adapter initialized with fallback")
         except Exception as e:
-            logger.error(f"Storage initialization failed: {e}")
+            logger.error(f"Storage adapter initialization failed: {e}")
             # Continue without storage - app will still work
         
         # Log critical dependency versions for build reliability

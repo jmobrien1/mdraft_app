@@ -16,8 +16,32 @@ from flask import current_app
 logger = logging.getLogger(__name__)
 
 
-class LocalStorage:
+class Storage:
+    """Unified storage interface for mdraft application."""
+    
+    backend_name = "base"
+    
+    def save(self, key: str, stream) -> Dict[str, Any]:
+        """Save a stream to storage with the given key."""
+        raise NotImplementedError
+    
+    def open(self, key: str) -> BinaryIO:
+        """Open a file stream for the given key."""
+        raise NotImplementedError
+    
+    def exists(self, key: str) -> bool:
+        """Check if a file exists with the given key."""
+        raise NotImplementedError
+    
+    def delete(self, key: str) -> bool:
+        """Delete a file with the given key."""
+        raise NotImplementedError
+
+
+class LocalStorage(Storage):
     """Local file system storage implementation."""
+    
+    backend_name = "local"
     
     def __init__(self, base_path: str = "/tmp/uploads"):
         """Initialize local storage with the specified base path."""
@@ -25,16 +49,67 @@ class LocalStorage:
         self.base_path.mkdir(parents=True, exist_ok=True)
         logger.info(f"LocalStorage initialized at {self.base_path.absolute()}")
     
-    def save(self, file_storage, subdir: str = "") -> Dict[str, Any]:
-        """Save a file to local storage.
+    def save(self, key: str, stream) -> Dict[str, Any]:
+        """Save a stream to local storage.
         
         Args:
-            file_storage: FileStorage object from Flask request
-            subdir: Optional subdirectory within the base path
+            key: Storage key (filename)
+            stream: File-like object to save
             
         Returns:
             Dictionary with storage metadata
         """
+        file_path = self.base_path / key
+        
+        # Ensure parent directory exists
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Save the stream
+        with open(file_path, 'wb') as f:
+            if hasattr(stream, 'read'):
+                # File-like object
+                while True:
+                    chunk = stream.read(8192)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+            else:
+                # Assume it's bytes or string
+                f.write(stream)
+        
+        logger.info(f"File saved to local storage: {file_path}")
+        
+        return {
+            "backend": "local",
+            "path": str(file_path),
+            "key": key,
+            "size": file_path.stat().st_size if file_path.exists() else 0
+        }
+    
+    def open(self, key: str) -> BinaryIO:
+        """Open a file stream for the given key."""
+        file_path = self.base_path / key
+        if not file_path.exists():
+            raise FileNotFoundError(f"File not found: {file_path}")
+        
+        return open(file_path, 'rb')
+    
+    def exists(self, key: str) -> bool:
+        """Check if file exists."""
+        return (self.base_path / key).exists()
+    
+    def delete(self, key: str) -> bool:
+        """Delete a file."""
+        file_path = self.base_path / key
+        if file_path.exists():
+            file_path.unlink()
+            logger.info(f"Deleted local file: {file_path}")
+            return True
+        return False
+    
+    # Legacy method for backward compatibility
+    def save_file_storage(self, file_storage, subdir: str = "") -> Dict[str, Any]:
+        """Save a FileStorage object to local storage (legacy method)."""
         # Create subdirectory if specified
         target_dir = self.base_path / subdir if subdir else self.base_path
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -54,32 +129,12 @@ class LocalStorage:
             "name": filename,
             "size": file_path.stat().st_size if file_path.exists() else 0
         }
-    
-    def read_bytes(self, file_path: str) -> bytes:
-        """Read file contents as bytes."""
-        path = Path(file_path)
-        if not path.exists():
-            raise FileNotFoundError(f"File not found: {file_path}")
-        
-        with open(path, 'rb') as f:
-            return f.read()
-    
-    def exists(self, file_path: str) -> bool:
-        """Check if file exists."""
-        return Path(file_path).exists()
-    
-    def delete(self, file_path: str) -> bool:
-        """Delete a file."""
-        path = Path(file_path)
-        if path.exists():
-            path.unlink()
-            logger.info(f"Deleted local file: {file_path}")
-            return True
-        return False
 
 
-class GCSStorage:
+class GCSStorage(Storage):
     """Google Cloud Storage implementation."""
+    
+    backend_name = "gcs"
     
     def __init__(self, bucket_name: str, credentials_path: str):
         """Initialize GCS storage with bucket and credentials."""
@@ -112,16 +167,61 @@ class GCSStorage:
         except (DefaultCredentialsError, FileNotFoundError) as e:
             raise RuntimeError(f"GCS authentication failed: {e}")
     
-    def save(self, file_storage, subdir: str = "") -> Dict[str, Any]:
-        """Save a file to GCS.
+    def save(self, key: str, stream) -> Dict[str, Any]:
+        """Save a stream to GCS.
         
         Args:
-            file_storage: FileStorage object from Flask request
-            subdir: Optional subdirectory within the bucket
+            key: Storage key (blob name)
+            stream: File-like object to save
             
         Returns:
             Dictionary with storage metadata
         """
+        blob = self._bucket.blob(key)
+        
+        if hasattr(stream, 'read'):
+            # File-like object
+            blob.upload_from_file(stream, rewind=True)
+        else:
+            # Assume it's bytes or string
+            blob.upload_from_string(stream)
+        
+        logger.info(f"File uploaded to GCS: gs://{self.bucket_name}/{key}")
+        
+        return {
+            "backend": "gcs",
+            "bucket": self.bucket_name,
+            "blob": key,
+            "uri": f"gs://{self.bucket_name}/{key}",
+            "size": blob.size
+        }
+    
+    def open(self, key: str) -> BinaryIO:
+        """Open a file stream for the given key."""
+        blob = self._bucket.blob(key)
+        if not blob.exists():
+            raise FileNotFoundError(f"GCS blob not found: gs://{self.bucket_name}/{key}")
+        
+        # Return a file-like object that reads from the blob
+        return blob.open('rb')
+    
+    def exists(self, key: str) -> bool:
+        """Check if file exists in GCS."""
+        blob = self._bucket.blob(key)
+        return blob.exists()
+    
+    def delete(self, key: str) -> bool:
+        """Delete a file from GCS."""
+        blob = self._bucket.blob(key)
+        if blob.exists():
+            blob.delete()
+            logger.info(f"Deleted GCS blob: gs://{self.bucket_name}/{key}")
+            return True
+        return False
+    
+    # Legacy method for backward compatibility
+    def save_file_storage(self, file_storage, subdir: str = "") -> Dict[str, Any]:
+        """Save a FileStorage object to GCS (legacy method)."""
         filename = secure_filename(file_storage.filename or "upload.bin")
         blob_name = f"{subdir}/{filename}" if subdir else filename
         
@@ -137,60 +237,6 @@ class GCSStorage:
             "uri": f"gs://{self.bucket_name}/{blob_name}",
             "size": blob.size
         }
-    
-    def read_bytes(self, gcs_uri: str) -> bytes:
-        """Read file contents from GCS URI."""
-        # Extract blob name from GCS URI
-        if gcs_uri.startswith("gs://"):
-            parts = gcs_uri[5:].split("/", 1)
-            if len(parts) != 2:
-                raise ValueError(f"Invalid GCS URI format: {gcs_uri}")
-            
-            bucket_name, blob_name = parts
-            if bucket_name != self.bucket_name:
-                raise ValueError(f"GCS URI bucket mismatch: {bucket_name} != {self.bucket_name}")
-        else:
-            blob_name = gcs_uri
-        
-        blob = self._bucket.blob(blob_name)
-        if not blob.exists():
-            raise FileNotFoundError(f"GCS blob not found: {gcs_uri}")
-        
-        return blob.download_as_bytes()
-    
-    def exists(self, gcs_uri: str) -> bool:
-        """Check if file exists in GCS."""
-        if gcs_uri.startswith("gs://"):
-            parts = gcs_uri[5:].split("/", 1)
-            if len(parts) != 2:
-                return False
-            bucket_name, blob_name = parts
-            if bucket_name != self.bucket_name:
-                return False
-        else:
-            blob_name = gcs_uri
-        
-        blob = self._bucket.blob(blob_name)
-        return blob.exists()
-    
-    def delete(self, gcs_uri: str) -> bool:
-        """Delete a file from GCS."""
-        if gcs_uri.startswith("gs://"):
-            parts = gcs_uri[5:].split("/", 1)
-            if len(parts) != 2:
-                return False
-            bucket_name, blob_name = parts
-            if bucket_name != self.bucket_name:
-                return False
-        else:
-            blob_name = gcs_uri
-        
-        blob = self._bucket.blob(blob_name)
-        if blob.exists():
-            blob.delete()
-            logger.info(f"Deleted GCS blob: {gcs_uri}")
-            return True
-        return False
 
 
 def init_storage(app) -> None:
@@ -242,7 +288,13 @@ def get_storage():
 def save_file(file_storage, subdir: str = "") -> Dict[str, Any]:
     """Save a file using the configured storage backend."""
     storage = get_storage()
-    return storage.save(file_storage, subdir)
+    return storage.save_file_storage(file_storage, subdir)
+
+
+def save_stream(key: str, stream) -> Dict[str, Any]:
+    """Save a stream using the configured storage backend."""
+    storage = get_storage()
+    return storage.save(key, stream)
 
 
 def read_file_bytes(file_uri: str) -> bytes:

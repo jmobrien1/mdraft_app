@@ -11,7 +11,7 @@ import hashlib
 import logging
 import os
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
@@ -402,9 +402,14 @@ def api_upload():
         # Upload file using storage with fallback
         try:
             from flask import current_app
+            from uuid import uuid4
             
             # Reset file stream position for upload
             file.stream.seek(0)
+            
+            # Generate secure storage key with UUID
+            safe_name = secure_filename(file.filename or "upload.bin")
+            storage_key = f"{uuid4().hex}_{safe_name}"
             
             # Get storage backend
             kind, handle = current_app.extensions.get("storage", ("local", None))
@@ -414,16 +419,29 @@ def api_upload():
                 current_app.logger.error("Storage backend not initialized properly")
                 return jsonify({"error": "server_error", "detail": "Storage backend not initialized"}), 500
             
+            # Check for required dependencies
+            try:
+                import pypdf
+                current_app.logger.debug("pypdf dependency available")
+            except ImportError:
+                current_app.logger.warning("pypdf dependency not available - PDF processing may be limited")
+                return jsonify({"error": "PDF features not installed"}), 501
+            
+            # Save file using storage adapter
             if kind == "gcs":
-                blob_name = secure_filename(file.filename or "upload.bin")
+                # Use GCS storage
                 client, bucket = handle
-                blob = bucket.blob(f"uploads/{blob_name}")
+                blob = bucket.blob(storage_key)
                 blob.upload_from_file(file.stream, rewind=True)
-                source_ref = {"backend":"gcs","bucket":bucket.name,"blob":blob.name}
-                gcs_uri = f"gs://{bucket.name}/{blob.name}"
+                gcs_uri = f"gs://{bucket.name}/{storage_key}"
+                current_app.logger.info(f"File uploaded to GCS: {gcs_uri}")
             else:
-                source_ref = handle.save(file)  # {"backend":"local","path":..., "name":...}
-                gcs_uri = source_ref["path"]
+                # Use local storage
+                from ..storage_adapter import save_stream
+                storage = handle
+                storage.save(storage_key, file.stream)
+                gcs_uri = storage_key  # For local storage, use the key as the URI
+                current_app.logger.info(f"File saved to local storage: {gcs_uri}")
             
             current_app.logger.info(f"Using storage URI: {gcs_uri}")
 
@@ -493,28 +511,37 @@ def _legacy_upload_handler(tmp_path: str, filename: str, file_hash: str,
     # Upload file using storage with fallback
     try:
         from flask import current_app
+        from uuid import uuid4
+        
+        # Check for required dependencies
+        try:
+            import pypdf
+            current_app.logger.debug("pypdf dependency available")
+        except ImportError:
+            current_app.logger.warning("pypdf dependency not available - PDF processing may be limited")
+            return jsonify({"error": "PDF features not installed"}), 501
+        
+        # Generate secure storage key with UUID
+        safe_name = secure_filename(filename)
+        storage_key = f"{uuid4().hex}_{safe_name}"
         
         # Get storage backend
         kind, handle = current_app.extensions.get("storage", ("local", None))
         
         if kind == "gcs":
-            blob_name = f"uploads/{uuid.uuid4()}-{secure_filename(filename)}"
             client, bucket = handle
-            blob = bucket.blob(blob_name)
+            blob = bucket.blob(storage_key)
             blob.upload_from_filename(tmp_path)
-            gcs_uri = f"gs://{bucket.name}/{blob.name}"
+            gcs_uri = f"gs://{bucket.name}/{storage_key}"
+            current_app.logger.info(f"File uploaded to GCS: {gcs_uri}")
         else:
-            # For local storage, we need to save the file and get the path
+            # For local storage, use the storage adapter
+            from ..storage_adapter import save_stream
+            storage = handle
             with open(tmp_path, 'rb') as f:
-                from io import BytesIO
-                file_storage = type('FileStorage', (), {
-                    'filename': filename,
-                    'stream': BytesIO(f.read()),
-                    'save': lambda path: None
-                })()
-                file_storage.stream.seek(0)
-                source_ref = handle.save(file_storage)
-                gcs_uri = source_ref["path"]
+                storage.save(storage_key, f)
+            gcs_uri = storage_key  # For local storage, use the key as the URI
+            current_app.logger.info(f"File saved to local storage: {gcs_uri}")
 
         # Create conversion record
         ttl_days = int(os.getenv("RETENTION_DAYS", "30"))
@@ -598,6 +625,18 @@ def get_conversion(id):
                 "readable_message": _get_readable_error_message(conv.error)
             }
         
+        # Check file availability in storage
+        available = True
+        if conv.stored_uri and status_value == "COMPLETED":
+            try:
+                from ..storage_adapter import file_exists
+                available = file_exists(conv.stored_uri)
+                if not available:
+                    current_app.logger.warning(f"Conversion {conv.id} completed but file not available: {conv.stored_uri}")
+            except Exception as e:
+                current_app.logger.error(f"Error checking file availability for conversion {conv.id}: {e}")
+                available = False
+        
         # Defensive progress handling - prevents 500s if column doesn't exist
         current_app.logger.info("Getting progress...")
         progress = getattr(conv, "progress", None)
@@ -620,6 +659,7 @@ def get_conversion(id):
             "filename": conv.filename,
             "status": status_value,  # Use centralized serialization
             "progress": progress,
+            "available": available,  # Add availability status
             "error": error_details,
             "links": {
                 "markdown": f"/api/conversions/{conv.id}/markdown",
@@ -783,11 +823,22 @@ def list_conversions():
                 status_str = serialize_conversion_status(c.status).lower()
                 progress = 100 if status_str in {"done", "completed", "finished", "success"} else 0
             
+            # Check file availability in storage
+            available = True
+            if c.stored_uri and serialize_conversion_status(c.status) == "COMPLETED":
+                try:
+                    from ..storage_adapter import file_exists
+                    available = file_exists(c.stored_uri)
+                except Exception as e:
+                    current_app.logger.error(f"Error checking file availability for conversion {c.id}: {e}")
+                    available = False
+            
             items.append({
                 "id": c.id,
                 "filename": c.filename,
                 "status": serialize_conversion_status(c.status),  # Use centralized serialization
                 "progress": progress,
+                "available": available,  # Add availability status
                 "created_at": c.created_at.isoformat(),
                 "links": {
                     "self": f"/api/conversions/{c.id}",

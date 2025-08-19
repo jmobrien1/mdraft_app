@@ -309,27 +309,30 @@ def add_document_to_proposal(proposal_id: int) -> Any:
     """Add a document to a proposal for processing.
     
     This endpoint handles file upload and document processing for proposals.
+    It's designed to be resilient to storage issues and provide clear error messages.
     
     Request: multipart/form-data OR JSON
     - file: The document file (for direct upload)
+    - conversion_job_id: ID of existing conversion job (alternative to file upload)
     - document_type: Type of document (main_rfp, pws, soo, spec, etc.)
-    - conversion_id: ID of existing conversion (alternative to file upload)
-    - conversion_ids: Array of conversion IDs (for bulk attachment)
     
     Returns:
     {
-        "attached": [
-            {
-                "id": 456,
-                "filename": "RFP-2024-001.pdf",
-                "document_type": "main_rfp",
-                "status": "completed",
-                "created_at": "2024-01-01T00:00:00Z"
-            }
-        ]
+        "id": 456,
+        "storage_key": "abc123_RFP-2024-001.pdf",
+        "filename": "RFP-2024-001.pdf",
+        "document_type": "main_rfp",
+        "status": "completed"
     }
     """
     try:
+        from uuid import uuid4
+        from werkzeug.utils import secure_filename
+        from flask import current_app as app, request, jsonify
+        from ..storage_adapter import get_storage, save_stream
+        from ..models import Job, ProposalDocument
+        from ..models_conversion import Conversion
+        
         # Get owner filter for authenticated user
         from ..auth.ownership import get_owner_filter
         
@@ -338,156 +341,107 @@ def add_document_to_proposal(proposal_id: int) -> Any:
         if not proposal:
             return jsonify({"error": "Proposal not found or access denied"}), 404
         
-        attached_documents = []
-        
-        # Check if this is a bulk attachment of existing conversions
-        if request.is_json:
-            data = request.get_json()
-            conversion_ids = data.get("conversion_ids", [])
-            single_conversion_id = data.get("conversion_id")
-            
-            if single_conversion_id:
-                conversion_ids = [single_conversion_id]
-            
-            if conversion_ids:
-                # Attach existing conversions
-                from ..models_conversion import Conversion
-                
-                for conv_id in conversion_ids:
-                    try:
-                        conv_id = str(conv_id).strip()
-                        conversion = Conversion.query.get(conv_id)
-                        
-                        if not conversion:
-                            continue
-                        
-                        # Check ownership
-                        if not (conversion.user_id == proposal.user_id or 
-                               conversion.visitor_session_id == proposal.visitor_session_id):
-                            continue
-                        
-                        document_type = data.get("document_type", "main_rfp")
-                        
-                        # Check for existing association (idempotence)
-                        existing_doc = ProposalDocument.query.filter_by(
-                            proposal_id=proposal_id,
-                            filename=conversion.filename
-                        ).first()
-                        
-                        if existing_doc:
-                            # Document already attached - return existing
-                            attached_documents.append({
-                                "id": existing_doc.id,
-                                "filename": existing_doc.filename,
-                                "document_type": existing_doc.document_type,
-                                "status": "already_attached",
-                                "created_at": existing_doc.created_at.isoformat()
-                            })
-                            continue
-                        
-                        # Add document to proposal
-                        rfp_data_layer = RFPDataLayer()
-                        doc = rfp_data_layer.add_document_to_proposal(
-                            proposal_id=proposal_id,
-                            filename=conversion.filename,
-                            document_type=document_type,
-                            gcs_uri=conversion.stored_uri,
-                            parsed_text=conversion.markdown
-                        )
-                        
-                        attached_documents.append({
-                            "id": doc.id,
-                            "filename": doc.filename,
-                            "document_type": doc.document_type,
-                            "status": "completed",
-                            "created_at": doc.created_at.isoformat()
-                        })
-                        
-                    except Exception as e:
-                        logger.error(f"Failed to attach conversion {conv_id}: {e}")
-                        continue
-                
-                return jsonify({"attached": attached_documents}), 201
-        
-        # Handle file upload (existing logic)
-        if "file" not in request.files:
-            return jsonify({"error": "No file provided"}), 400
-        
-        file = request.files["file"]
-        if file.filename == "":
-            return jsonify({"error": "No file selected"}), 400
-        
+        job_id = request.form.get("conversion_job_id")
+        upload = request.files.get("file")
         document_type = request.form.get("document_type", "main_rfp")
-        if not document_type or not document_type.strip():
-            return jsonify({"error": "document_type is required"}), 400
-        
-        # Process the file using existing conversion pipeline
-        from ..utils import generate_job_id, is_file_allowed
-        from ..auth.ownership import get_owner_id_for_creation
-        
-        if not is_file_allowed(file.filename):
-            return jsonify({"error": "File type not allowed"}), 400
-        
-        # Generate unique filename
-        job_id_str = generate_job_id()
-        filename = f"{job_id_str}_{file.filename}"
-        
-        # Upload to GCS
-        bucket_name = current_app.config.get("GCS_BUCKET_NAME")
-        gcs_uri = None
-        if bucket_name:
-            from ..storage import upload_stream_to_gcs
-            gcs_uri = upload_stream_to_gcs(file.stream, bucket_name, filename)
-        
-        # Get owner ID for job creation
-        owner_id = get_owner_id_for_creation()
-        if not owner_id:
-            return jsonify({"error": "Unable to determine owner for job creation"}), 400
-        
-        # Create job for processing
-        from ..models import Job
-        job = Job(
-            user_id=owner_id,
-            filename=filename,
-            status="PENDING",
-            gcs_uri=gcs_uri or filename
-        )
-        db.session.add(job)
-        db.session.commit()
-        
-        # Process the document
+
+        # Exactly one input source must be provided
+        if bool(job_id) == bool(upload):
+            return jsonify({"error": "Provide exactly one of 'file' or 'conversion_job_id'."}), 400
+
+        if job_id:
+            # Handle conversion job attachment
+            try:
+                job_id_int = int(job_id)
+            except (ValueError, TypeError):
+                return jsonify({"error": "Invalid conversion_job_id format."}), 400
+            
+            job = Job.query.get(job_id_int)
+            if not job:
+                return jsonify({"error": "Conversion job not found."}), 404
+            
+            # Check ownership
+            if not (job.user_id == proposal.user_id or 
+                   job.visitor_session_id == proposal.visitor_session_id):
+                return jsonify({"error": "Access denied to conversion job."}), 403
+            
+            if job.status != "COMPLETED" or not job.gcs_uri:
+                return jsonify({"error": "Conversion job not ready yet."}), 409
+
+            # Verify the file actually exists in storage
+            storage = get_storage()
+            if not storage.exists(job.gcs_uri):
+                app.logger.error("Orphaned conversion job %s: %s", job.id, job.gcs_uri)
+                return jsonify({
+                    "error": "Converted file is no longer available. Please re-upload the PDF."
+                }), 410
+
+            # Open stream from storage
+            try:
+                stream = storage.open(job.gcs_uri)
+                original_name = job.filename
+                storage_key = job.gcs_uri
+            except Exception as e:
+                app.logger.error("Storage error [%s]: %s", storage.backend_name, job.gcs_uri, exc_info=True)
+                return jsonify({
+                    "error": "Unable to access converted file. Please re-upload the PDF."
+                }), 410
+
+        else:
+            # Handle direct file upload
+            if not upload or not upload.filename:
+                return jsonify({"error": "No file uploaded."}), 400
+            
+            # Validate file type
+            from ..utils import is_file_allowed
+            if not is_file_allowed(upload.filename):
+                return jsonify({"error": "File type not allowed."}), 400
+            
+            # Generate secure storage key
+            safe_name = secure_filename(upload.filename)
+            storage_key = f"{uuid4().hex}_{safe_name}"
+            
+            # Save to storage
+            try:
+                storage = get_storage()
+                storage.save(storage_key, upload.stream)
+                stream = storage.open(storage_key)
+                original_name = upload.filename
+            except Exception as e:
+                app.logger.error("Storage error [%s]: %s", storage.backend_name, storage_key, exc_info=True)
+                return jsonify({
+                    "error": "Failed to save uploaded file. Please try again."
+                }), 500
+
+        # Persist the document using the verified/created storage_key
         try:
-            markdown_content = process_job(job.id, gcs_uri or filename)
-            
-            # Add document to proposal
-            rfp_data_layer = RFPDataLayer()
-            doc = rfp_data_layer.add_document_to_proposal(
+            doc = ProposalDocument(
                 proposal_id=proposal_id,
-                filename=filename,
-                document_type=document_type.strip(),
-                gcs_uri=gcs_uri,
-                parsed_text=markdown_content
+                filename=original_name,
+                document_type=document_type,
+                gcs_uri=storage_key,
+                parsed_text=None  # Will be populated by conversion process if needed
             )
+            db.session.add(doc)
+            db.session.commit()
             
-            attached_documents.append({
-                "id": doc.id,
+            return jsonify({
+                "id": doc.id, 
+                "storage_key": storage_key,
                 "filename": doc.filename,
                 "document_type": doc.document_type,
-                "status": "completed",
-                "created_at": doc.created_at.isoformat()
-            })
-            
-            return jsonify({"attached": attached_documents}), 201
+                "status": "completed"
+            }), 201
             
         except Exception as e:
-            logger.error(f"Failed to process document: {e}")
+            app.logger.error("Failed to persist document: %s", e, exc_info=True)
             db.session.rollback()
-            return jsonify({"error": f"Document processing failed: {str(e)}"}), 500
+            return jsonify({"error": "Failed to save document record."}), 500
         
     except Exception as e:
-        logger.error(f"Failed to add document to proposal: {e}")
+        logger.error("Failed to add document to proposal: %s", e, exc_info=True)
         db.session.rollback()
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal server error."}), 500
 
 
 @bp.route("/compliance-matrix/proposals/<int:proposal_id>/requirements", methods=["GET"])
