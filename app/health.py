@@ -24,7 +24,7 @@ def health_check():
     
     # Check storage backend
     try:
-        from ..storage_adapter import get_storage
+        from app.storage_adapter import get_storage
         storage = get_storage()
         storage_status = "healthy"
         storage_backend = storage.backend_name
@@ -35,7 +35,7 @@ def health_check():
     
     # Check PDF backend
     try:
-        from ..services.pdf_backend import validate_pdf_backend
+        from app.services.pdf_backend import validate_pdf_backend
         pdf_status = validate_pdf_backend()
         if pdf_status["available"]:
             pdf_backend_status = "healthy"
@@ -83,7 +83,7 @@ def health_simple():
 def health_pdf():
     """PDF backend health check endpoint."""
     try:
-        from ..services.pdf_backend import validate_pdf_backend
+        from app.services.pdf_backend import validate_pdf_backend
         status = validate_pdf_backend()
         
         if status["available"]:

@@ -136,7 +136,7 @@ class DocumentIngestionService:
     def _extract_pdf_text(self, storage_uri: str) -> str:
         """Extract text from PDF using the PDF backend service."""
         try:
-            from ..services.pdf_backend import extract_text_from_pdf
+            from app.services.pdf_backend import extract_text_from_pdf
             
             storage = get_storage()
             with storage.open(storage_uri) as file_stream:

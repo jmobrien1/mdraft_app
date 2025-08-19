@@ -276,27 +276,61 @@ def get_proposal_documents(proposal_id: int) -> Any:
         if not proposal:
             return jsonify({"error": "Proposal not found or access denied"}), 404
         
-        # Get documents for the proposal
-        documents = ProposalDocument.query.filter_by(proposal_id=proposal_id).all()
-        
-        result = []
-        for doc in documents:
-            doc_data = {
-                "id": doc.id,
-                "original_filename": doc.filename,
-                "document_type": doc.document_type,
-                "ingestion_status": getattr(doc, 'ingestion_status', 'unknown'),
-                "available_sections": getattr(doc, 'available_sections', []),
-                "created_at": doc.created_at.isoformat()
-            }
+        # Get documents for the proposal with resilience for missing columns
+        try:
+            # Try to get documents with ingestion fields
+            documents = ProposalDocument.query.filter_by(proposal_id=proposal_id).all()
             
-            # Add error information if ingestion failed
-            if getattr(doc, 'ingestion_status', '') == 'error':
-                doc_data["ingestion_error"] = getattr(doc, 'ingestion_error', 'Unknown error')
+            result = []
+            for doc in documents:
+                doc_data = {
+                    "id": doc.id,
+                    "original_filename": doc.filename,
+                    "document_type": doc.document_type,
+                    "ingestion_status": getattr(doc, 'ingestion_status', 'unknown'),
+                    "available_sections": getattr(doc, 'available_sections', []),
+                    "created_at": doc.created_at.isoformat()
+                }
+                
+                # Add error information if ingestion failed
+                if getattr(doc, 'ingestion_status', '') == 'error':
+                    doc_data["ingestion_error"] = getattr(doc, 'ingestion_error', 'Unknown error')
+                
+                result.append(doc_data)
             
-            result.append(doc_data)
-        
-        return jsonify(result), 200
+            return jsonify(result), 200
+            
+        except Exception as db_error:
+            # Handle missing columns gracefully
+            if "ingestion_status" in str(db_error) or "UndefinedColumn" in str(db_error):
+                current_app.logger.warning("DB missing ingestion columns; falling back to basic query")
+                
+                # Fallback query without ingestion columns
+                from sqlalchemy import text
+                query = text("""
+                    SELECT id, filename, document_type, created_at 
+                    FROM proposal_documents 
+                    WHERE proposal_id = :proposal_id
+                """)
+                
+                result = db.session.execute(query, {"proposal_id": proposal_id})
+                documents = result.fetchall()
+                
+                fallback_result = []
+                for doc in documents:
+                    fallback_result.append({
+                        "id": doc.id,
+                        "original_filename": doc.filename,
+                        "document_type": doc.document_type,
+                        "ingestion_status": "none",  # Default for missing column
+                        "available_sections": [],    # Default for missing column
+                        "created_at": doc.created_at.isoformat()
+                    })
+                
+                return jsonify(fallback_result), 200
+            else:
+                # Re-raise if it's not a column issue
+                raise db_error
         
     except Exception as e:
         logger.error("Failed to get proposal documents: %s", e, exc_info=True)

@@ -444,7 +444,7 @@ def api_upload():
             
             # Check for required dependencies
             try:
-                from ..services.pdf_backend import validate_pdf_backend
+                from app.services.pdf_backend import validate_pdf_backend
                 pdf_status = validate_pdf_backend()
                 
                 if not pdf_status["available"]:
@@ -473,7 +473,7 @@ def api_upload():
                 current_app.logger.info(f"File uploaded to GCS: {gcs_uri}")
             else:
                 # Use local storage
-                from ..storage_adapter import save_stream
+                from app.storage_adapter import save_stream
                 storage = handle
                 storage.save(storage_key, file.stream)
                 gcs_uri = storage_key  # For local storage, use the key as the URI
@@ -551,7 +551,7 @@ def _legacy_upload_handler(tmp_path: str, filename: str, file_hash: str,
         
         # Check for required dependencies
         try:
-            from ..services.pdf_backend import validate_pdf_backend
+            from app.services.pdf_backend import validate_pdf_backend
             pdf_status = validate_pdf_backend()
             
             if not pdf_status["available"]:
@@ -585,7 +585,7 @@ def _legacy_upload_handler(tmp_path: str, filename: str, file_hash: str,
             current_app.logger.info(f"File uploaded to GCS: {gcs_uri}")
         else:
             # For local storage, use the storage adapter
-            from ..storage_adapter import save_stream
+            from app.storage_adapter import save_stream
             storage = handle
             with open(tmp_path, 'rb') as f:
                 storage.save(storage_key, f)
