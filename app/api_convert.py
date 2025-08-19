@@ -320,26 +320,27 @@ def api_upload():
         return jsonify({"error":"file_empty"}), 400
     
     # Validate file using comprehensive validation system
-    from .utils.validation import validate_upload_file, ValidationError
+    from .utils.validation import validate_file_upload
     
     # Get correlation ID for logging
     correlation_id = request.headers.get('X-Correlation-ID') or request.headers.get('X-Request-ID')
     
     current_app.logger.info("Starting file validation...")
-    validation_result = validate_upload_file(file.stream, file.filename, correlation_id)
+    validation_result = validate_file_upload(request)
     current_app.logger.info("File validation completed successfully")
     
-    if not validation_result.is_valid:
-        error_response = {"error": validation_result.error.value}
-        if validation_result.error == ValidationError.FILE_TOO_LARGE:
+    if not validation_result["valid"]:
+        error_response = {"error": validation_result["error"]}
+        if "too large" in validation_result["error"].lower():
             return jsonify(error_response), 413
-        elif validation_result.error == ValidationError.EMPTY_FILE:
+        elif "empty" in validation_result["error"].lower():
             return jsonify({"error": "file_empty"}), 400
-        elif validation_result.error == ValidationError.VIRUS_DETECTED:
-            return jsonify(error_response), 400
         else:
             return jsonify(error_response), 400
 
+    # Use the validated file from the validation result
+    file = validation_result["file"]
+    
     current_app.logger.info("Processing filename and callback URL...")
     current_app.logger.info(f"Original filename: {file.filename}")
     current_app.logger.info(f"File object type: {type(file)}")
