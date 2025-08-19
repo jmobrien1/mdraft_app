@@ -166,10 +166,13 @@ class DocumentIngestionService:
                 
         except ImportError:
             self.logger.error("PDF backend service not available")
-            return ""
+            raise RuntimeError("PDF backend service not available. Install pdfminer.six, PyMuPDF, or pypdf")
         except Exception as e:
             self.logger.exception(f"Error extracting PDF text from {storage_uri}")
-            return ""
+            if "No PDF text backend available" in str(e):
+                raise RuntimeError("No PDF text backend available. Install pdfminer.six, PyMuPDF, or pypdf")
+            else:
+                raise RuntimeError(f"PDF text extraction failed: {str(e)}")
     
     def _extract_text_file(self, storage_uri: str) -> str:
         """Extract text from a text file."""

@@ -261,7 +261,7 @@ def create_app() -> Flask:
             from .services.pdf_backend import validate_pdf_backend
             pdf_backend = validate_pdf_backend()
             if pdf_backend["available"]:
-                logger.info("PDF backend: %s", pdf_backend["backend"])
+                logger.info("PDF backend: %s %s", pdf_backend["backend"], pdf_backend["version"])
             else:
                 logger.error("PDF backend: %s - %s", pdf_backend["backend"], pdf_backend["error"])
                 logger.error("PDF backend recommendation: %s", pdf_backend["recommendation"])

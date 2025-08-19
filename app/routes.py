@@ -61,6 +61,12 @@ def home() -> Any:
     return jsonify({"status": "ok", "message": "Welcome to mdraft!"})
 
 
+@bp.route("/favicon.ico")
+def favicon() -> Any:
+    """Serve favicon to quiet 404s."""
+    return send_from_directory("static", "favicon.svg", mimetype="image/svg+xml")
+
+
 @bp.route("/health", methods=["GET"])
 def health_check() -> Any:
     """Comprehensive health check that verifies database and Redis connectivity.
