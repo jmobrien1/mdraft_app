@@ -68,7 +68,7 @@ def get_rfp_text_legacy(document_id: str) -> Optional[str]:
     Legacy text loading function (kept for backward compatibility).
     
     This function loads the original file by document_id and extracts text
-    based on the file type. It supports PDF (using pypdf), TXT, and MD files.
+    based on the file type. It supports PDF (using pdfminer.six), TXT, and MD files.
     
     Args:
         document_id: The document ID (job ID as string)
@@ -138,22 +138,17 @@ def _extract_text_from_bytes(file_data: bytes, filename: str, logger: logging.Lo
     """
     filename_lower = filename.lower()
     
-    # Handle PDF files using pypdf
+    # Handle PDF files using pdfminer.six
     if filename_lower.endswith('.pdf'):
         try:
-            from pypdf import PdfReader
+            from pdfminer.high_level import extract_text
             pdf_stream = io.BytesIO(file_data)
-            reader = PdfReader(pdf_stream)
-            text = ""
-            for page in reader.pages:
-                page_text = page.extract_text()
-                if page_text:
-                    text += page_text + "\n"
+            text = extract_text(pdf_stream)
             logger.info(f"Successfully extracted text from PDF: {len(text)} characters")
             return text.strip()
         except ImportError:
-            logger.warning("pypdf not available for PDF extraction")
-            raise ValueError("PDF text extraction not available (pypdf not installed)")
+            logger.warning("pdfminer.six not available for PDF extraction")
+            raise ValueError("PDF text extraction not available (pdfminer.six not installed)")
         except Exception as e:
             logger.error(f"Failed to extract text from PDF: {e}")
             raise ValueError("Failed to extract text from PDF file")

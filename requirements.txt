@@ -344,8 +344,6 @@ pyjwt[crypto]==2.10.1
     # via
     #   msal
     #   pyjwt
-pypdf==4.2.0
-    # via -r requirements.in
 python-dateutil==2.9.0.post0
     # via
     #   celery

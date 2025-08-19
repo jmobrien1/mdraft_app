@@ -94,7 +94,7 @@ def create_app() -> Flask:
         logger.info("Flask instance created")
         
         # Runtime check for key modules
-        for _mod in ("pypdf", "google.cloud.storage", "openai", "stripe"):
+        for _mod in ("pdfminer", "google.cloud.storage", "openai", "stripe"):
             try:
                 __import__(_mod.replace(".", "_") if _mod=="google.cloud.storage" else _mod)
                 app.logger.info("%s: OK", _mod)
@@ -233,10 +233,10 @@ def create_app() -> Flask:
         # Log critical dependency versions for build reliability
         logger.info("=== Dependency Version Check ===")
         try:
-            import pypdf
-            logger.info("pypdf %s", getattr(pypdf, "__version__", "unknown"))
+            import pdfminer
+            logger.info("pdfminer.six %s", getattr(pdfminer, "__version__", "unknown"))
         except Exception as e:
-            logger.warning("pypdf not importable: %s", e)
+            logger.warning("pdfminer.six not importable: %s", e)
         
         try:
             import openai
@@ -255,6 +255,18 @@ def create_app() -> Flask:
             logger.info("stripe %s", getattr(stripe, "__version__", "unknown"))
         except Exception as e:
             logger.warning("stripe not importable: %s", e)
+        
+        # PDF Backend validation
+        try:
+            from .services.pdf_backend import validate_pdf_backend
+            pdf_backend = validate_pdf_backend()
+            if pdf_backend["available"]:
+                logger.info("PDF backend: %s", pdf_backend["backend"])
+            else:
+                logger.error("PDF backend: %s - %s", pdf_backend["backend"], pdf_backend["error"])
+                logger.error("PDF backend recommendation: %s", pdf_backend["recommendation"])
+        except Exception as e:
+            logger.error("PDF backend validation failed: %s", e)
         
         logger.info("=== End Dependency Version Check ===")
         
