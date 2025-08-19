@@ -28,7 +28,7 @@ from sqlalchemy import inspect, text
 
 app = create_app()
 with app.app_context():
-    engine = app.extensions['sqlalchemy'].db.engine
+    engine = app.extensions['sqlalchemy'].engine
     inspector = inspect(engine)
     
     # Check jobs table
