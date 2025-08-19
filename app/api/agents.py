@@ -444,7 +444,7 @@ def add_document_to_proposal(proposal_id: int) -> Any:
         job = Job(
             user_id=owner_id,
             filename=filename,
-            status="queued",
+            status="PENDING",
             gcs_uri=gcs_uri or filename
         )
         db.session.add(job)

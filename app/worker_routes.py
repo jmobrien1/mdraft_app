@@ -130,8 +130,8 @@ def start_job_processing_atomic(session, job_id: int) -> tuple[bool, Optional[st
         result = session.execute(
             text("""
                 UPDATE jobs 
-                SET status = 'processing', started_at = NOW(), updated_at = NOW() 
-                WHERE id = :job_id AND status IN ('queued', 'processing')
+                SET status = 'PROCESSING', started_at = NOW(), updated_at = NOW() 
+                WHERE id = :job_id AND status IN ('PENDING', 'PROCESSING')
                 RETURNING id
             """),
             {"job_id": job_id}
