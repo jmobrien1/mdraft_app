@@ -322,7 +322,7 @@ def process_document_task() -> Any:
                     job.output_uri = output_path
                     job.completed_at = datetime.utcnow()
                     job.error_message = None
-                    job.status = "completed"
+                    job.status = "COMPLETED"
                     db.session.commit()
                 
                 processing_duration = time.time() - start_time
@@ -342,7 +342,7 @@ def process_document_task() -> Any:
                 # Update job with failure information
                 job = db.session.get(Job, job_id)
                 if job:
-                    job.status = "failed"
+                    job.status = "FAILED"
                     job.error_message = str(e)
                     db.session.commit()
                 
