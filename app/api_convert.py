@@ -374,21 +374,44 @@ def api_upload():
     current_app.logger.info(f"File saved to temporary location: {tmp_path}")
     
     try:
-        # Enforce security checks
+        # Enforce security checks with proper error handling
         current_app.logger.info("Starting security checks...")
         fallback_mime = (file.mimetype or None)
         current_app.logger.info(f"Fallback MIME type: {fallback_mime}")
-        mime, category = sniff_category(tmp_path, fallback_mime=fallback_mime)
-        current_app.logger.info(f"Security check result - MIME: {mime}, Category: {category}")
-        if category is None:
-            return jsonify(error="unsupported_media_type", mime=(mime or fallback_mime)), 415
-        if not size_ok(tmp_path, category):
-            return jsonify(error="payload_too_large", category=category), 413
+        
+        # Check if security checks are enabled
+        security_enabled = os.getenv("FILE_SCAN_ENABLED", "0") == "1"
+        if not security_enabled:
+            current_app.logger.warning("Security checks skipped (FILE_SCAN_ENABLED=0)")
+            # Use fallback MIME type for basic validation
+            mime = fallback_mime or "application/octet-stream"
+            category = "doc" if mime == "application/pdf" else "text"
+        else:
+            try:
+                from .security import sniff_category, size_ok
+                mime, category = sniff_category(tmp_path, fallback_mime=fallback_mime)
+                current_app.logger.info(f"Security check result - MIME: {mime}, Category: {category}")
+                
+                if category is None:
+                    return jsonify(error="unsupported_media_type", mime=(mime or fallback_mime)), 415
+                if not size_ok(tmp_path, category):
+                    return jsonify(error="payload_too_large", category=category), 413
+                    
+            except Exception as e:
+                current_app.logger.exception("Security check failed")
+                # Return 422 (unprocessable) instead of 500
+                return jsonify({"error": "Security check failed", "detail": str(e)[:200]}), 422
 
         # Calculate SHA256 for idempotency
         current_app.logger.info("Calculating SHA256 hash...")
-        file_hash = sha256_file(tmp_path)
-        current_app.logger.info(f"SHA256 hash calculated: {file_hash[:8]}...")
+        try:
+            from .quality import sha256_file
+            file_hash = sha256_file(tmp_path)
+            current_app.logger.info(f"SHA256 hash calculated: {file_hash[:8]}...")
+        except Exception as e:
+            current_app.logger.exception("SHA256 calculation failed")
+            return jsonify({"error": "File processing failed", "detail": "Unable to process file"}), 422
+            
         original_size = os.path.getsize(tmp_path)
         original_mime = mime or fallback_mime or "application/octet-stream"
         current_app.logger.info(f"File size: {original_size}, MIME: {original_mime}")

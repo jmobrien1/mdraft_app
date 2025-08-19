@@ -248,6 +248,9 @@ class ProposalDocument(db.Model):
     gcs_uri: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     parsed_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     section_mapping: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON mapping of UCF sections
+    ingestion_status: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # queued, processing, ready, error
+    available_sections: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON array of available sections
+    ingestion_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Error message if ingestion failed
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

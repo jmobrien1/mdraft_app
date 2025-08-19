@@ -253,28 +253,23 @@ def list_proposals() -> Any:
 @login_required
 @csrf_exempt_for_api
 def get_proposal_documents(proposal_id: int) -> Any:
-    """Get all documents for a proposal.
+    """Get all documents for a proposal with ingestion status.
     
     Returns:
-    {
-        "documents": [
-            {
-                "id": 456,
-                "filename": "RFP-2024-001.pdf",
-                "document_type": "main_rfp",
-                "created_at": "2024-01-01T00:00:00Z"
-            }
-        ]
-    }
+    [
+        {
+            "id": 27,
+            "original_filename": "RFP_Java_copy.pdf",
+            "document_type": "main_rfp",
+            "ingestion_status": "ready",   // queued | processing | ready | error
+            "available_sections": ["A","B","C"],
+            "created_at": "2024-01-01T00:00:00Z"
+        }
+    ]
     """
     try:
-        # Get owner filter and validate proposal access
+        # Get owner filter for authenticated user
         from ..auth.ownership import get_owner_filter
-        from ..auth.visitor import get_or_create_visitor_session_id
-        
-        if not getattr(current_user, "is_authenticated", False):
-            resp = make_response()
-            vid, resp = get_or_create_visitor_session_id(resp)
         
         owner_filter = get_owner_filter()
         proposal = Proposal.query.filter_by(id=proposal_id, **owner_filter).first()
@@ -286,20 +281,26 @@ def get_proposal_documents(proposal_id: int) -> Any:
         
         result = []
         for doc in documents:
-            result.append({
+            doc_data = {
                 "id": doc.id,
-                "filename": doc.filename,
+                "original_filename": doc.filename,
                 "document_type": doc.document_type,
+                "ingestion_status": getattr(doc, 'ingestion_status', 'unknown'),
+                "available_sections": getattr(doc, 'available_sections', []),
                 "created_at": doc.created_at.isoformat()
-            })
+            }
+            
+            # Add error information if ingestion failed
+            if getattr(doc, 'ingestion_status', '') == 'error':
+                doc_data["ingestion_error"] = getattr(doc, 'ingestion_error', 'Unknown error')
+            
+            result.append(doc_data)
         
-        return jsonify({
-            "documents": result
-        }), 200
+        return jsonify(result), 200
         
     except Exception as e:
-        logger.error(f"Failed to get proposal documents: {e}")
-        return jsonify({"error": str(e)}), 500
+        logger.error("Failed to get proposal documents: %s", e, exc_info=True)
+        return jsonify({"error": "Internal server error."}), 500
 
 
 @bp.route("/compliance-matrix/proposals/<int:proposal_id>/documents", methods=["POST"])
@@ -420,17 +421,28 @@ def add_document_to_proposal(proposal_id: int) -> Any:
                 filename=original_name,
                 document_type=document_type,
                 gcs_uri=storage_key,
-                parsed_text=None  # Will be populated by conversion process if needed
+                parsed_text=None,  # Will be populated by ingestion process
+                ingestion_status="queued"  # Mark as queued for ingestion
             )
             db.session.add(doc)
             db.session.commit()
+            
+            # Kick off ingestion (sync for now, can be made async later)
+            try:
+                from ..services.ingest import ingest_document_sync
+                ingestion_result = ingest_document_sync(doc.id)
+                app.logger.info(f"Ingestion completed for document {doc.id}: {ingestion_result}")
+            except Exception as e:
+                app.logger.exception(f"Failed to ingest document {doc.id}")
+                # Don't fail the request - document is still created
             
             return jsonify({
                 "id": doc.id, 
                 "storage_key": storage_key,
                 "filename": doc.filename,
                 "document_type": doc.document_type,
-                "status": "completed"
+                "status": "completed",
+                "ingestion_status": getattr(doc, 'ingestion_status', 'unknown')
             }), 201
             
         except Exception as e:

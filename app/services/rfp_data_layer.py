@@ -268,19 +268,52 @@ class RFPDataLayer:
         documents = self.get_proposal_documents(proposal_id)
         collated_content = {}
         
-        for section_id in target_sections:
+        # Track available sections across all documents
+        all_available_sections = set()
+        
+        for doc in documents:
+            if hasattr(doc, 'available_sections') and doc.available_sections:
+                all_available_sections.update(doc.available_sections)
+        
+        # Filter requested sections to only those that are available
+        filtered_sections = [s for s in target_sections if s in all_available_sections]
+        
+        if target_sections and not filtered_sections:
+            self.logger.warning("Requested sections %s not found; available=%s", 
+                               target_sections, list(all_available_sections))
+            
+            # Fallback to all available sections if requested sections not found
+            if all_available_sections:
+                filtered_sections = list(all_available_sections)
+                self.logger.info("Falling back to all available sections: %s", filtered_sections)
+            else:
+                self.logger.warning("No sections available in any documents for proposal %s", proposal_id)
+                return {}
+        
+        for section_id in filtered_sections:
             section_content = []
             
             for doc in documents:
                 if not doc.parsed_text:
                     continue
                 
-                sections = self.detect_ucf_sections(doc.parsed_text)
-                if section_id in sections:
-                    section_content.append({
-                        'document': doc.filename,
-                        'content': sections[section_id].content
-                    })
+                # Check if document has this section in its available_sections
+                if hasattr(doc, 'available_sections') and section_id in doc.available_sections:
+                    # Use the parsed text to extract section content
+                    sections = self.detect_ucf_sections(doc.parsed_text)
+                    if section_id in sections:
+                        section_content.append({
+                            'document': doc.filename,
+                            'content': sections[section_id].content
+                        })
+                else:
+                    # Legacy fallback: try to detect sections in parsed text
+                    sections = self.detect_ucf_sections(doc.parsed_text)
+                    if section_id in sections:
+                        section_content.append({
+                            'document': doc.filename,
+                            'content': sections[section_id].content
+                        })
             
             if section_content:
                 # Combine content from all documents for this section
