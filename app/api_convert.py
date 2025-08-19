@@ -444,11 +444,24 @@ def api_upload():
             
             # Check for required dependencies
             try:
-                import pypdf
-                current_app.logger.debug("pypdf dependency available")
-            except ImportError:
-                current_app.logger.warning("pypdf dependency not available - PDF processing may be limited")
-                return jsonify({"error": "PDF features not installed"}), 501
+                from ..services.pdf_backend import validate_pdf_backend
+                pdf_status = validate_pdf_backend()
+                
+                if not pdf_status["available"]:
+                    current_app.logger.warning(f"PDF backend not available: {pdf_status['error']}")
+                    return jsonify({
+                        "error": "pdf_backend_unavailable",
+                        "detail": pdf_status["error"],
+                        "recommendation": pdf_status["recommendation"]
+                    }), 503  # Service Unavailable
+                
+                current_app.logger.debug(f"PDF backend available: {pdf_status['backend']}")
+            except Exception as e:
+                current_app.logger.exception("PDF backend validation failed")
+                return jsonify({
+                    "error": "pdf_backend_error",
+                    "detail": "PDF backend validation failed"
+                }), 503
             
             # Save file using storage adapter
             if kind == "gcs":
@@ -538,11 +551,24 @@ def _legacy_upload_handler(tmp_path: str, filename: str, file_hash: str,
         
         # Check for required dependencies
         try:
-            import pypdf
-            current_app.logger.debug("pypdf dependency available")
-        except ImportError:
-            current_app.logger.warning("pypdf dependency not available - PDF processing may be limited")
-            return jsonify({"error": "PDF features not installed"}), 501
+            from ..services.pdf_backend import validate_pdf_backend
+            pdf_status = validate_pdf_backend()
+            
+            if not pdf_status["available"]:
+                current_app.logger.warning(f"PDF backend not available: {pdf_status['error']}")
+                return jsonify({
+                    "error": "pdf_backend_unavailable",
+                    "detail": pdf_status["error"],
+                    "recommendation": pdf_status["recommendation"]
+                }), 503  # Service Unavailable
+            
+            current_app.logger.debug(f"PDF backend available: {pdf_status['backend']}")
+        except Exception as e:
+            current_app.logger.exception("PDF backend validation failed")
+            return jsonify({
+                "error": "pdf_backend_error",
+                "detail": "PDF backend validation failed"
+            }), 503
         
         # Generate secure storage key with UUID
         safe_name = secure_filename(filename)

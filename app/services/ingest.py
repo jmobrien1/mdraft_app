@@ -134,27 +134,38 @@ class DocumentIngestionService:
             return ""
     
     def _extract_pdf_text(self, storage_uri: str) -> str:
-        """Extract text from PDF using pypdf."""
+        """Extract text from PDF using the PDF backend service."""
         try:
-            import pypdf
+            from ..services.pdf_backend import extract_text_from_pdf
             
             storage = get_storage()
             with storage.open(storage_uri) as file_stream:
-                reader = pypdf.PdfReader(file_stream)
+                # Save to temporary file for PDF processing
+                import tempfile
+                import os
                 
-                pages = []
-                for page_num, page in enumerate(reader.pages):
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
+                    # Copy file stream to temporary file
+                    while True:
+                        chunk = file_stream.read(8192)
+                        if not chunk:
+                            break
+                        tmp_file.write(chunk)
+                    tmp_file.flush()
+                    
                     try:
-                        text = page.extract_text() or ""
-                        pages.append(text)
-                    except Exception as e:
-                        self.logger.warning(f"Error extracting text from page {page_num}: {e}")
-                        pages.append("")
-                
-                return "\n".join(pages)
+                        # Extract text using PDF backend
+                        text = extract_text_from_pdf(tmp_file.name)
+                        return text
+                    finally:
+                        # Clean up temporary file
+                        try:
+                            os.unlink(tmp_file.name)
+                        except Exception:
+                            pass
                 
         except ImportError:
-            self.logger.error("pypdf not available for PDF text extraction")
+            self.logger.error("PDF backend service not available")
             return ""
         except Exception as e:
             self.logger.exception(f"Error extracting PDF text from {storage_uri}")
@@ -221,14 +232,43 @@ class DocumentIngestionService:
 def ingest_document_async(doc_id: int) -> None:
     """Async wrapper for document ingestion."""
     try:
+        # Propagate request ID for logging correlation
+        from flask import g
+        request_id = getattr(g, 'request_id', None)
+        if request_id:
+            current_app.logger.info(f"Starting async ingestion for document {doc_id} (request_id: {request_id})")
+        
         service = DocumentIngestionService()
         result = service.ingest_document(doc_id)
-        current_app.logger.info(f"Async ingestion completed for document {doc_id}: {result}")
+        
+        if request_id:
+            current_app.logger.info(f"Async ingestion completed for document {doc_id} (request_id: {request_id}): {result}")
+        else:
+            current_app.logger.info(f"Async ingestion completed for document {doc_id}: {result}")
+            
     except Exception as e:
-        current_app.logger.exception(f"Async ingestion failed for document {doc_id}")
+        from flask import g
+        request_id = getattr(g, 'request_id', None)
+        if request_id:
+            current_app.logger.exception(f"Async ingestion failed for document {doc_id} (request_id: {request_id})")
+        else:
+            current_app.logger.exception(f"Async ingestion failed for document {doc_id}")
 
 
 def ingest_document_sync(doc_id: int) -> Dict[str, Any]:
     """Synchronous document ingestion."""
+    # Propagate request ID for logging correlation
+    from flask import g
+    request_id = getattr(g, 'request_id', None)
+    if request_id:
+        current_app.logger.info(f"Starting sync ingestion for document {doc_id} (request_id: {request_id})")
+    
     service = DocumentIngestionService()
-    return service.ingest_document(doc_id)
+    result = service.ingest_document(doc_id)
+    
+    if request_id:
+        current_app.logger.info(f"Sync ingestion completed for document {doc_id} (request_id: {request_id}): {result}")
+    else:
+        current_app.logger.info(f"Sync ingestion completed for document {doc_id}: {result}")
+    
+    return result
