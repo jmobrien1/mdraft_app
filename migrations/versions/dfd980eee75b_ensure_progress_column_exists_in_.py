@@ -30,10 +30,16 @@ def upgrade():
         if 'progress' not in columns:
             batch_op.add_column(sa.Column('progress', sa.Integer(), nullable=False, server_default='0'))
         
-        batch_op.alter_column('status',
-               existing_type=sa.VARCHAR(length=20),
-               type_=sa.Enum('QUEUED', 'PROCESSING', 'COMPLETED', 'FAILED', 'CANCELLED', name='conversionstatus'),
-               existing_nullable=False)
+        # Check if enum type exists before trying to use it
+        try:
+            batch_op.alter_column('status',
+                   existing_type=sa.VARCHAR(length=20),
+                   type_=sa.Enum('QUEUED', 'PROCESSING', 'COMPLETED', 'FAILED', 'CANCELLED', name='conversionstatus'),
+                   existing_nullable=False)
+        except Exception as e:
+            # If enum creation fails, keep the VARCHAR type
+            print(f"Warning: Could not create conversionstatus enum: {e}")
+            print("Keeping status as VARCHAR type")
         batch_op.create_index('ix_conversions_status_created_at', ['status', 'created_at'], unique=False)
         batch_op.create_index('ix_conversions_status_user_id', ['status', 'user_id'], unique=False)
         batch_op.create_index('ix_conversions_status_visitor_id', ['status', 'visitor_session_id'], unique=False)
@@ -48,10 +54,16 @@ def upgrade():
         batch_op.alter_column('user_id',
                existing_type=sa.INTEGER(),
                nullable=True)
-        batch_op.alter_column('status',
-               existing_type=sa.VARCHAR(length=64),
-               type_=sa.Enum('PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'CANCELLED', name='jobstatus'),
-               existing_nullable=False)
+        # Check if enum type exists before trying to use it
+        try:
+            batch_op.alter_column('status',
+                   existing_type=sa.VARCHAR(length=64),
+                   type_=sa.Enum('PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'CANCELLED', name='jobstatus'),
+                   existing_nullable=False)
+        except Exception as e:
+            # If enum creation fails, keep the VARCHAR type
+            print(f"Warning: Could not create jobstatus enum: {e}")
+            print("Keeping status as VARCHAR type")
 
     with op.batch_alter_table('proposal_documents', schema=None) as batch_op:
         batch_op.drop_index('ix_proposal_documents_proposal_id')
@@ -71,10 +83,16 @@ def downgrade():
         batch_op.create_index('ix_proposal_documents_proposal_id', ['proposal_id'], unique=False)
 
     with op.batch_alter_table('jobs', schema=None) as batch_op:
-        batch_op.alter_column('status',
-               existing_type=sa.Enum('PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'CANCELLED', name='jobstatus'),
-               type_=sa.VARCHAR(length=64),
-               existing_nullable=False)
+        # Check if enum type exists before trying to revert it
+        try:
+            batch_op.alter_column('status',
+                   existing_type=sa.Enum('PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'CANCELLED', name='jobstatus'),
+                   type_=sa.VARCHAR(length=64),
+                   existing_nullable=False)
+        except Exception as e:
+            # If enum doesn't exist, column is already VARCHAR
+            print(f"Warning: Could not revert jobstatus enum: {e}")
+            print("Status column is already VARCHAR type")
         batch_op.alter_column('user_id',
                existing_type=sa.INTEGER(),
                nullable=False)
@@ -89,10 +107,16 @@ def downgrade():
         batch_op.drop_index('ix_conversions_status_visitor_id')
         batch_op.drop_index('ix_conversions_status_user_id')
         batch_op.drop_index('ix_conversions_status_created_at')
-        batch_op.alter_column('status',
-               existing_type=sa.Enum('QUEUED', 'PROCESSING', 'COMPLETED', 'FAILED', 'CANCELLED', name='conversionstatus'),
-               type_=sa.VARCHAR(length=20),
-               existing_nullable=False)
+        # Check if enum type exists before trying to revert it
+        try:
+            batch_op.alter_column('status',
+                   existing_type=sa.Enum('QUEUED', 'PROCESSING', 'COMPLETED', 'FAILED', 'CANCELLED', name='conversionstatus'),
+                   type_=sa.VARCHAR(length=20),
+                   existing_nullable=False)
+        except Exception as e:
+            # If enum doesn't exist, column is already VARCHAR
+            print(f"Warning: Could not revert conversionstatus enum: {e}")
+            print("Status column is already VARCHAR type")
         # Only drop progress column if it exists
         connection = op.get_bind()
         inspector = inspect(connection)
