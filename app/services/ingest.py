@@ -74,7 +74,7 @@ class DocumentIngestionService:
             # Update document with parsed content
             doc.parsed_text = text_content
             doc.ingestion_status = "ready"
-            doc.available_sections = list(sections.keys())
+            doc.available_sections = list(sections.keys()) or []  # Ensure it's never None
             
             # Store section mapping as JSON
             section_mapping = {

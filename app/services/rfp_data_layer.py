@@ -91,7 +91,8 @@ class RFPDataLayer:
             filename=filename,
             document_type=document_type,
             gcs_uri=gcs_uri,
-            parsed_text=parsed_text
+            parsed_text=parsed_text,
+            available_sections=[]  # Initialize as empty array
         )
         self.db_session.add(doc)
         self.db_session.commit()

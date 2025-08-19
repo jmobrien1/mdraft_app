@@ -456,7 +456,8 @@ def add_document_to_proposal(proposal_id: int) -> Any:
                 document_type=document_type,
                 gcs_uri=storage_key,
                 parsed_text=None,  # Will be populated by ingestion process
-                ingestion_status="queued"  # Mark as queued for ingestion
+                ingestion_status="queued",  # Mark as queued for ingestion
+                available_sections=[]  # Initialize as empty array
             )
             db.session.add(doc)
             db.session.commit()
