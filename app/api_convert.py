@@ -782,9 +782,6 @@ def list_conversions():
                 status_str = serialize_conversion_status(c.status).lower()
                 progress = 100 if status_str in {"done", "completed", "finished", "success"} else 0
             
-            # Use centralized serialization to prevent JSON serialization errors
-            from app.utils.serialization import serialize_conversion_status
-            
             items.append({
                 "id": c.id,
                 "filename": c.filename,
