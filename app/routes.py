@@ -278,10 +278,10 @@ def upload() -> Any:
     from .auth.ownership import get_owner_id_for_creation
     user_id = get_owner_id_for_creation()
     
-    # Create job record in the database with status='queued'
+    # Create job record in the database with status='PENDING'
     job_fields = {
         "filename": filename,
-        "status": "queued",
+        "status": "PENDING",
         "gcs_uri": gcs_uri
     }
     
