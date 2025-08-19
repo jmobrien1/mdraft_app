@@ -39,9 +39,9 @@ from .schemas.free_capabilities import (
 bp = Blueprint("main", __name__)
 
 
-def _prompt_path(current_app, hyphen_name: str, underscore_name: str) -> str:
+def _prompt_path(flask_app, hyphen_name: str, underscore_name: str) -> str:
     import os
-    base = os.path.join(current_app.root_path, "prompts", "free_tier")
+    base = os.path.join(flask_app.root_path, "prompts", "free_tier")
     p1 = os.path.join(base, hyphen_name)
     p2 = os.path.join(base, underscore_name)
     if os.path.exists(p1): return p1

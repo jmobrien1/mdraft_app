@@ -40,6 +40,13 @@ def convert_with_markitdown(input_path: str) -> str:
     logger = logging.getLogger(__name__)
     logger.info(f"Converting file {input_path} to Markdown using markitdown")
     
+    # Check for required dependencies
+    try:
+        import pypdf
+        logger.debug("pypdf dependency available")
+    except ImportError:
+        logger.warning("pypdf dependency not available - PDF processing may be limited")
+    
     try:
         # Create temporary output file
         with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False) as temp_file:
@@ -354,22 +361,22 @@ def process_job(job_id: int, gcs_uri: str) -> str:
     """
     import time
     
-    logger = current_app.logger
+    app_logger = current_app.logger
     start_time = time.time()
     
     job: Optional[Job] = db.session.get(Job, job_id)
     if job is None:
-        logger.error(f"Job {job_id} not found")
+        app_logger.error(f"Job {job_id} not found")
         raise ValueError("Job not found")
     
     if job.status == "completed":
-        logger.info(f"Duplicate task received for job {job_id}, skipping")
+        app_logger.info(f"Duplicate task received for job {job_id}, skipping")
         # Return existing content if available, otherwise empty string
         return ""
     
     # Validate storage path
     if not gcs_uri:
-        logger.error(f"No storage path provided for job {job_id}")
+        app_logger.error(f"No storage path provided for job {job_id}")
         raise ValueError("No storage path provided")
     
     # Download file from storage to temp
@@ -378,62 +385,62 @@ def process_job(job_id: int, gcs_uri: str) -> str:
         if gcs_uri.startswith("gs://"):
             # GCS storage - use the storage extension if available
             try:
-                from flask import current_app
-                kind, handle = current_app.extensions.get("storage", (None, None))
+                from flask import current_app as flask_current_app
+                kind, handle = flask_current_app.extensions.get("storage", (None, None))
+            except Exception as e:
+                app_logger.warning(f"Failed to get storage extension: {e}")
+                kind, handle = None, None
+            
+            if kind == "gcs":
+                # Use the configured GCS client
+                client, bucket = handle
                 
-                if kind == "gcs":
-                    # Use the configured GCS client
-                    client, bucket = handle
-                    
-                    # Parse GCS URI
-                    bucket_name = gcs_uri.split("/")[2]
-                    blob_name = "/".join(gcs_uri.split("/")[3:])
-                    
-                    # Use the configured bucket if it matches, otherwise create a new client
-                    if bucket.name == bucket_name:
-                        blob = bucket.blob(blob_name)
-                    else:
-                        # Fallback to creating a new client for different bucket
-                        from google.cloud import storage
-                        client = storage.Client()
-                        bucket = client.bucket(bucket_name)
-                        blob = bucket.blob(blob_name)
+                # Parse GCS URI
+                bucket_name = gcs_uri.split("/")[2]
+                blob_name = "/".join(gcs_uri.split("/")[3:])
+                
+                # Use the configured bucket if it matches, otherwise create a new client
+                if bucket.name == bucket_name:
+                    blob = bucket.blob(blob_name)
                 else:
-                    # Fallback to creating a new GCS client
+                    # Fallback to creating a new client for different bucket
                     from google.cloud import storage
                     client = storage.Client()
-                    bucket_name = gcs_uri.split("/")[2]
-                    blob_name = "/".join(gcs_uri.split("/")[3:])
                     bucket = client.bucket(bucket_name)
                     blob = bucket.blob(blob_name)
-                
-                # Check if file exists
-                if not blob.exists():
-                    logger.error(f"File not found in GCS for job {job_id}: {gcs_uri}")
-                    raise FileNotFoundError(f"File not found in GCS: {gcs_uri}")
-                
-                # Download to temporary file
-                import tempfile
-                temp_fd, input_path = tempfile.mkstemp(suffix=f"_{job.filename}")
-                with os.fdopen(temp_fd, 'wb') as f:
-                    blob.download_to_file(f)
-                
-                logger.info(f"Downloaded {gcs_uri} to temporary file {input_path}")
-                
-            except Exception as e:
-                logger.error(f"Failed to download from GCS for job {job_id}: {e}")
-                raise
+            else:
+                # Fallback to creating a new GCS client
+                from google.cloud import storage
+                client = storage.Client()
+                bucket_name = gcs_uri.split("/")[2]
+                blob_name = "/".join(gcs_uri.split("/")[3:])
+                bucket = client.bucket(bucket_name)
+                blob = bucket.blob(blob_name)
+            
+            # Check if file exists
+            if not blob.exists():
+                app_logger.error(f"File not found in GCS for job {job_id}: {gcs_uri}")
+                raise FileNotFoundError(f"File not found in GCS: {gcs_uri}")
+            
+            # Download to temporary file
+            import tempfile
+            temp_fd, input_path = tempfile.mkstemp(suffix=f"_{job.filename}")
+            with os.fdopen(temp_fd, 'wb') as f:
+                blob.download_to_file(f)
+            
+            app_logger.info(f"Downloaded {gcs_uri} to temporary file {input_path}")
+            
         else:
             # Local storage
             if not os.path.exists(gcs_uri):
-                logger.error(f"File not found in local storage for job {job_id}: {gcs_uri}")
+                app_logger.error(f"File not found in local storage for job {job_id}: {gcs_uri}")
                 raise FileNotFoundError(f"File not found in local storage: {gcs_uri}")
             
             # Use the local file directly
             input_path = gcs_uri
-            logger.info(f"Using local file {gcs_uri} for job {job_id}")
+            app_logger.info(f"Using local file {gcs_uri} for job {job_id}")
     except Exception as e:
-        logger.error(f"Failed to download file for job {job_id}: {e}")
+        app_logger.error(f"Failed to download file for job {job_id}: {e}")
         raise
     
     # Determine MIME type for conversion engine selection
@@ -459,10 +466,10 @@ def process_job(job_id: int, gcs_uri: str) -> str:
     docai_configured = all([flags.get("GOOGLE_CLOUD_PROJECT"), flags.get("DOCAI_PROCESSOR_ID")])
     
     if engine == "docai":
-        logger.info(f"Using DocAI extractor for {job.filename} (MIME: {mime_type}) - Pro conversion enabled: {pro_enabled}, DocAI configured: {docai_configured}")
+        app_logger.info(f"Using DocAI extractor for {job.filename} (MIME: {mime_type}) - Pro conversion enabled: {pro_enabled}, DocAI configured: {docai_configured}")
     else:
         reason = "Pro conversion disabled" if not pro_enabled else "DocAI not configured" if not docai_configured else f"Not PDF ({mime_type})"
-        logger.info(f"Using markitdown extractor for {job.filename} (MIME: {mime_type}) - Reason: {reason}")
+        app_logger.info(f"Using markitdown extractor for {job.filename} (MIME: {mime_type}) - Reason: {reason}")
     
     try:
         if engine == "docai":
@@ -480,16 +487,16 @@ def process_job(job_id: int, gcs_uri: str) -> str:
         
         # Calculate processing duration
         processing_duration = time.time() - start_time
-        logger.info(f"Job {job_id} completed successfully using {engine} engine in {processing_duration:.2f}s")
+        app_logger.info(f"Job {job_id} completed successfully using {engine} engine in {processing_duration:.2f}s")
         
         # Clean up temporary files
         try:
             os.unlink(input_path)
         except Exception as e:
-            logger.warning(f"Failed to clean up temporary file {input_path}: {e}")
+            app_logger.warning(f"Failed to clean up temporary file {input_path}: {e}")
         
         return markdown_content
         
     except Exception as exc:
-        logger.exception(f"Error converting job {job_id}: {exc}")
+        app_logger.exception(f"Error converting job {job_id}: {exc}")
         raise

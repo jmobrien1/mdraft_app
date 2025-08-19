@@ -293,6 +293,15 @@ def create_app() -> Flask:
             """Fast health check endpoint for Render health checks."""
             return {"ok": True}, 200
         
+        # Initialize request logging middleware
+        try:
+            from .middleware.logging import init_request_logging
+            init_request_logging(app)
+            logger.info("Request logging middleware initialized")
+        except Exception as e:
+            logger.warning(f"Request logging middleware initialization failed: {e}")
+            # Continue without request logging - app will still work
+        
         # Initialize Flask-Login on this app
         login_manager.init_app(app)
 

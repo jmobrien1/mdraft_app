@@ -99,6 +99,11 @@ def run_compliance_matrix_agent() -> Any:
         result["status"] = "success"
         result["processing_time"] = processing_time
         
+        # Check if there was an error (like no documents)
+        if "error" in result:
+            logger.warning(f"Compliance matrix agent warning for proposal {proposal_id}: {result['error']}")
+            return jsonify(result), 422
+        
         logger.info(f"Compliance matrix agent completed for proposal {proposal_id} in {processing_time:.2f}s")
         return jsonify(result), 200
         

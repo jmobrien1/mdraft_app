@@ -27,34 +27,52 @@ errors = Blueprint("errors", __name__)
 
 
 def _get_request_id() -> str:
-    """Extract request ID from environment or generate one if missing.
+    """Extract request ID from Flask g object or generate one if missing.
     
-    Always returns a valid request ID. Never assumes header exists.
-    Falls back to UUID generation if environment variable is missing.
+    Always returns a valid request ID. Uses the middleware's request_id if available.
+    Falls back to UUID generation if not available.
     """
-    # Try to get from environment (set by middleware)
-    request_id = request.environ.get('X-Request-ID')
-    if request_id:
-        return request_id
-    
-    # Try to get from headers as fallback
-    request_id = request.headers.get('X-Request-ID') or request.headers.get('X-Request-Id')
-    if request_id:
-        # Validate UUID format
-        try:
-            uuid.UUID(request_id)
+    try:
+        from flask import g
+        
+        # Try to get from Flask g object (set by middleware)
+        request_id = getattr(g, "request_id", None)
+        if request_id:
             return request_id
-        except (ValueError, TypeError):
-            pass
-    
-    # Generate new UUID if no valid request ID found
-    new_request_id = str(uuid.uuid4())
-    logger.warning("No valid request ID found, generated new UUID", extra={
-        "generated_request_id": new_request_id,
-        "method": request.method,
-        "path": request.path
-    })
-    return new_request_id
+        
+        # Try to get from environment as fallback
+        request_id = request.environ.get('X-Request-ID')
+        if request_id:
+            return request_id
+        
+        # Try to get from headers as fallback
+        request_id = request.headers.get('X-Request-ID') or request.headers.get('X-Request-Id')
+        if request_id:
+            # Validate UUID format
+            try:
+                uuid.UUID(request_id)
+                return request_id
+            except (ValueError, TypeError):
+                pass
+        
+        # Generate new UUID if no valid request ID found
+        new_request_id = str(uuid.uuid4())
+        logger.warning("No valid request ID found, generating one now", extra={
+            "generated_request_id": new_request_id,
+            "method": request.method,
+            "path": request.path
+        })
+        return new_request_id
+    except Exception as e:
+        # If anything goes wrong, generate a fallback request ID
+        fallback_id = str(uuid.uuid4())
+        logger.error("Error getting request ID, using fallback", extra={
+            "error": str(e),
+            "fallback_request_id": fallback_id,
+            "method": request.method,
+            "path": request.path
+        })
+        return fallback_id
 
 
 def _get_user_id() -> Optional[str]:
@@ -71,24 +89,36 @@ def _get_user_id() -> Optional[str]:
 def _log_error(level: str, path: str, status: int, request_id: str, user_id: Optional[str], 
                error_name: str, detail: str, exception: Optional[Exception] = None) -> None:
     """Log structured JSON error information."""
-    log_data: Dict[str, Any] = {
-        "level": level,
-        "path": path,
-        "status": status,
-        "request_id": request_id,
-        "user_id": user_id or "anonymous",
-        "error": error_name,
-        "detail": detail
-    }
-    
-    if exception:
-        log_data["exception_type"] = type(exception).__name__
-    
-    logger.log(
-        getattr(logging, level.upper()),
-        "Error occurred",
-        extra=log_data
-    )
+    try:
+        log_data: Dict[str, Any] = {
+            "level": level,
+            "path": path,
+            "status": status,
+            "request_id": request_id,
+            "user_id": user_id or "anonymous",
+            "error": error_name,
+            "detail": detail
+        }
+        
+        if exception:
+            log_data["exception_type"] = type(exception).__name__
+        
+        logger.log(
+            getattr(logging, level.upper()),
+            "Error occurred",
+            extra=log_data
+        )
+    except Exception as e:
+        # If logging fails, don't let it break the error response
+        try:
+            logger.error("Failed to log error", extra={
+                "logging_error": str(e),
+                "original_request_id": request_id,
+                "original_error": error_name
+            })
+        except Exception:
+            # If even the fallback logging fails, just continue
+            pass
 
 
 def _capture_sentry_exception(exception: Exception, request_id: str, user_id: Optional[str]) -> None:
@@ -130,21 +160,39 @@ def _create_error_response(error_name: str, detail: str, status: int,
     
     Returns consistent JSON format: {error, message, request_id}
     """
-    path = getattr(request, 'path', 'unknown')
-    
-    # Log the error
-    _log_error("ERROR", path, status, request_id, user_id, error_name, detail, exception)
-    
-    # Capture in Sentry if it's an exception (with safe error handling)
-    if exception:
-        _capture_sentry_exception(exception, request_id, user_id)
-    
-    # Return safe JSON response with standardized format
-    return jsonify({
-        "error": error_name,
-        "message": detail,  # Changed from 'detail' to 'message' for consistency
-        "request_id": request_id
-    }), status
+    try:
+        path = getattr(request, 'path', 'unknown')
+        
+        # Log the error
+        _log_error("ERROR", path, status, request_id, user_id, error_name, detail, exception)
+        
+        # Capture in Sentry if it's an exception (with safe error handling)
+        if exception:
+            _capture_sentry_exception(exception, request_id, user_id)
+        
+        # Return safe JSON response with standardized format
+        return jsonify({
+            "error": error_name,
+            "message": detail,  # Changed from 'detail' to 'message' for consistency
+            "request_id": request_id
+        }), status
+    except Exception as e:
+        # If anything goes wrong in error response creation, return a minimal response
+        try:
+            logger.error("Failed to create error response", extra={
+                "error": str(e),
+                "original_request_id": request_id,
+                "original_error": error_name
+            })
+        except Exception:
+            pass
+        
+        # Return minimal error response
+        return jsonify({
+            "error": "internal_error",
+            "message": "Internal server error",
+            "request_id": request_id
+        }), 500
 
 
 def _map_exception_to_error(exception: Exception) -> Tuple[str, str, int]:

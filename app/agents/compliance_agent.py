@@ -291,6 +291,17 @@ Return only valid JSON.
                                    target_sections: List[str] = None) -> Dict[str, Any]:
         """Complete workflow for processing proposal requirements."""
         try:
+            # Check if proposal has documents before processing
+            docs = self.rfp_data_layer.get_proposal_documents(proposal_id)
+            if not docs:
+                self.logger.warning(f"No documents uploaded for proposal {proposal_id}")
+                return {
+                    'proposal_id': proposal_id,
+                    'total_requirements': 0,
+                    'requirements': [],
+                    'error': 'No documents uploaded for this proposal'
+                }
+            
             # Extract requirements
             requirements = self.extract_requirements_from_proposal(proposal_id, target_sections)
             
