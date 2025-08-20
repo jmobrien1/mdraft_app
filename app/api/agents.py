@@ -462,13 +462,16 @@ def add_document_to_proposal(proposal_id: int) -> Any:
             db.session.add(doc)
             db.session.commit()
             
+            # Capture doc_id before starting ingestion
+            doc_id = doc.id
+            
             # Kick off ingestion (sync for now, can be made async later)
             try:
                 from ..services.ingest import ingest_document_sync
-                ingestion_result = ingest_document_sync(doc.id)
-                app.logger.info(f"Ingestion completed for document {doc.id}: {ingestion_result}")
+                ingestion_result = ingest_document_sync(doc_id)
+                app.logger.info(f"Ingestion completed for document {doc_id}: {ingestion_result}")
             except Exception as e:
-                app.logger.exception(f"Failed to ingest document {doc.id}")
+                app.logger.exception(f"Failed to ingest document {doc_id}")
                 # Don't fail the request - document is still created
             
             return jsonify({

@@ -99,12 +99,24 @@ class DocumentIngestionService:
             }
             
         except Exception as e:
+            # Rollback first to avoid PendingRollbackError
+            try:
+                self.db_session.rollback()
+            except Exception:
+                pass  # Ignore rollback errors
+            
+            # Log the error with the doc_id we captured earlier
             self.logger.exception(f"Failed to ingest document {doc_id}")
-            # Update document status to error
-            if doc:
-                doc.ingestion_status = "error"
-                doc.ingestion_error = str(e)[:500]
-                self.db_session.commit()
+            
+            # Try to update document status to error (in a new transaction)
+            try:
+                if doc:
+                    doc.ingestion_status = "error"
+                    doc.ingestion_error = str(e)[:500]
+                    self.db_session.commit()
+            except Exception as update_error:
+                self.logger.error(f"Failed to update document {doc_id} error status: {update_error}")
+                # Don't let this error propagate
             
             return {"status": "error", "message": str(e)}
     

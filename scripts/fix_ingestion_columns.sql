@@ -50,7 +50,7 @@ BEGIN
         AND column_name = 'section_mapping'
     ) THEN
         ALTER TABLE proposal_documents 
-        ADD COLUMN section_mapping JSONB;
+        ADD COLUMN section_mapping JSONB DEFAULT '{}'::jsonb;
         RAISE NOTICE 'Added section_mapping column';
     ELSE
         RAISE NOTICE 'section_mapping column already exists';

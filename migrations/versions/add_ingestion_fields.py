@@ -26,8 +26,8 @@ def upgrade():
     # Add ingestion error field
     op.add_column('proposal_documents', sa.Column('ingestion_error', sa.Text(), nullable=True))
     
-    # Add section mapping field (JSON) with default
-    op.add_column('proposal_documents', sa.Column('section_mapping', postgresql.JSONB(), nullable=True))
+    # Add section mapping field (JSONB) with default
+    op.add_column('proposal_documents', sa.Column('section_mapping', postgresql.JSONB(), nullable=True, server_default='{}'))
     
     # Create index for ingestion status
     op.create_index('ix_proposal_documents_ingestion_status', 'proposal_documents', ['ingestion_status'])
