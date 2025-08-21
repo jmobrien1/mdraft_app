@@ -96,7 +96,10 @@ def create_app() -> Flask:
         # Runtime check for key modules
         for _mod in ("pdfminer", "google.cloud.storage", "openai", "stripe"):
             try:
-                __import__(_mod.replace(".", "_") if _mod=="google.cloud.storage" else _mod)
+                if _mod == "google.cloud.storage":
+                    import google.cloud.storage
+                else:
+                    __import__(_mod)
                 app.logger.info("%s: OK", _mod)
             except Exception as e:
                 app.logger.warning("%s missing: %s", _mod, e)
@@ -228,7 +231,17 @@ def create_app() -> Flask:
             logger.info("Storage adapter initialized with fallback")
         except Exception as e:
             logger.error(f"Storage adapter initialization failed: {e}")
-            # Continue without storage - app will still work
+            # Initialize local storage as fallback
+            try:
+                from .storage_adapter import LocalStorage
+                import os
+                upload_dir = os.getenv("UPLOAD_DIR", "/tmp/uploads")
+                storage = LocalStorage(base_path=upload_dir)
+                app.extensions["storage"] = ("local", storage)
+                logger.info(f"Local storage fallback initialized at {upload_dir}")
+            except Exception as fallback_error:
+                logger.error(f"Storage fallback initialization also failed: {fallback_error}")
+                # Continue without storage - app will still work
         
         # Log critical dependency versions for build reliability
         logger.info("=== Dependency Version Check ===")
@@ -263,10 +276,11 @@ def create_app() -> Flask:
             if pdf_backend["available"]:
                 logger.info("PDF backend: %s %s", pdf_backend["backend"], pdf_backend["version"])
             else:
-                logger.error("PDF backend: %s - %s", pdf_backend["backend"], pdf_backend["error"])
-                logger.error("PDF backend recommendation: %s", pdf_backend["recommendation"])
+                logger.warning("PDF backend: %s - %s", pdf_backend["backend"], pdf_backend["error"])
+                logger.warning("PDF backend recommendation: %s", pdf_backend["recommendation"])
         except Exception as e:
-            logger.error("PDF backend validation failed: %s", e)
+            logger.warning("PDF backend validation failed: %s", e)
+            # Don't let PDF backend issues crash the app
         
         logger.info("=== End Dependency Version Check ===")
         
