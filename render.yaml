@@ -10,10 +10,6 @@ services:
       gunicorn --bind 0.0.0.0:$PORT --workers 2 --threads 8 --timeout 120 --access-logfile - --error-logfile - --preload wsgi:app
     healthCheckPath: /health/simple
     healthCheckTimeout: 300
-    disk:
-      name: uploads
-      mountPath: /data/uploads
-      sizeGB: 10
     envVars:
       - key: FLASK_ENV
         value: production
@@ -26,13 +22,9 @@ services:
       - key: QUEUE_MODE
         value: sync
       - key: USE_GCS
-        value: "0"
+        value: "1"
       - key: SENTRY_ENVIRONMENT
         value: production
-      - key: STORAGE_BACKEND
-        value: "local"
-      - key: UPLOAD_DIR
-        value: "/data/uploads"
 
   - type: worker
     name: mdraft_app-worker
@@ -46,13 +38,9 @@ services:
       - key: QUEUE_MODE
         value: celery
       - key: USE_GCS
-        value: "0"
+        value: "1"
       - key: SENTRY_ENVIRONMENT
         value: production
-      - key: STORAGE_BACKEND
-        value: "local"
-      - key: UPLOAD_DIR
-        value: "/tmp/uploads"
 
   - type: cron
     name: mdraft-cleanup
@@ -67,8 +55,4 @@ services:
       - key: RETENTION_DAYS
         value: "30"
       - key: USE_GCS
-        value: "0"
-      - key: STORAGE_BACKEND
-        value: "local"
-      - key: UPLOAD_DIR
-        value: "/tmp/uploads"
+        value: "1"
