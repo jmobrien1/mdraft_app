@@ -250,10 +250,29 @@ def init_storage(app) -> None:
                os.getenv("STORAGE_BACKEND") or 
                "auto").lower()
     
-    # Prefer explicit env var for GCP key file (matches GCP SDK)
+    # Check for GCS credentials in multiple ways
     cred_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "/etc/secrets/gcp.json")
+    cred_json = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
     
-    if backend == "gcs" or (backend == "auto" and os.path.exists(cred_path)):
+    # If we have JSON credentials, write them to a temporary file
+    if cred_json and not os.path.exists(cred_path):
+        try:
+            import tempfile
+            import json
+            
+            # Validate JSON
+            json.loads(cred_json)
+            
+            # Write to temporary file
+            with open(cred_path, 'w') as f:
+                f.write(cred_json)
+            
+            app.logger.info(f"GCS credentials written to {cred_path}")
+        except Exception as e:
+            app.logger.warning(f"Failed to write GCS credentials: {e}")
+            cred_path = None
+    
+    if backend == "gcs" or (backend == "auto" and (os.path.exists(cred_path) or cred_json)):
         try:
             bucket_name = app.config.get("GCS_BUCKET_NAME") or os.getenv("GCS_BUCKET_NAME")
             if not bucket_name:

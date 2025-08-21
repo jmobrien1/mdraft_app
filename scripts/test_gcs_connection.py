@@ -12,18 +12,32 @@ def test_gcs_connection():
     
     # Check environment variables
     creds_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+    creds_json = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
     bucket_name = os.getenv("GCS_BUCKET_NAME")
     storage_backend = os.getenv("STORAGE_BACKEND")
     
     print(f"GOOGLE_APPLICATION_CREDENTIALS: {creds_path}")
+    print(f"GOOGLE_APPLICATION_CREDENTIALS_JSON: {'Set' if creds_json else 'Not set'}")
     print(f"GCS_BUCKET_NAME: {bucket_name}")
     print(f"STORAGE_BACKEND: {storage_backend}")
     
-    # Check if credentials file exists
+    # Check if credentials file exists or JSON is provided
     if creds_path and os.path.exists(creds_path):
         print(f"✅ Credentials file exists: {creds_path}")
+    elif creds_json:
+        print(f"✅ JSON credentials provided via environment variable")
+        # Write JSON to temporary file for testing
+        try:
+            import json
+            json.loads(creds_json)  # Validate JSON
+            with open(creds_path, 'w') as f:
+                f.write(creds_json)
+            print(f"✅ JSON credentials written to {creds_path}")
+        except Exception as e:
+            print(f"❌ Failed to write JSON credentials: {e}")
+            return False
     else:
-        print(f"❌ Credentials file missing: {creds_path}")
+        print(f"❌ No credentials found (file: {creds_path}, JSON: {'Set' if creds_json else 'Not set'})")
         return False
     
     # Test GCS import
